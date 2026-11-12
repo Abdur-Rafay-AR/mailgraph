@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Generator, Iterable, Optional, Callable, Dict, Any
 from backend.app.db.database import Database
 from backend.app.ingestion.mime_parser import ParsedEmail
+from backend.app.classification.rules_engine import RulesEngine
 
 @dataclass
 class IngestionResult:
@@ -22,6 +23,7 @@ class IngestionPipeline:
 
     def __init__(self, db: Database):
         self.db = db
+        self.rules_engine = RulesEngine()
 
     def ingest_messages(
         self,
@@ -44,6 +46,10 @@ class IngestionPipeline:
                 # Cache known sender IDs to minimize queries
                 cursor.execute("SELECT normalized_address, id FROM senders;")
                 sender_cache: Dict[str, int] = {row[0]: row[1] for row in cursor.fetchall()}
+                
+                # Cache categories
+                cursor.execute("SELECT name, id FROM categories;")
+                category_cache: Dict[str, int] = {row[0]: row[1] for row in cursor.fetchall()}
                 
                 # Cache existing provider message IDs for this account for fast deduplication
                 cursor.execute("SELECT provider_message_id FROM messages WHERE account_id = ?;", (account_id,))
@@ -126,6 +132,15 @@ class IngestionPipeline:
                             INSERT INTO messages_fts (message_id, subject, snippet, body_text)
                             VALUES (?, ?, ?, ?);
                         """, (message_id, email_msg.subject, email_msg.snippet, email_msg.body_text or ""))
+                        
+                        # 7. Apply deterministic classification rule
+                        cat_name, conf, reason = self.rules_engine.classify(email_msg)
+                        cat_id = category_cache.get(cat_name) or category_cache.get("unknown")
+                        if cat_id:
+                            cursor.execute("""
+                                INSERT OR IGNORE INTO message_categories (message_id, category_id, source, confidence, reason)
+                                VALUES (?, ?, 'rule', ?, ?);
+                            """, (message_id, cat_id, conf, reason))
                         
                         # Update local caches
                         existing_pids.add(email_msg.provider_message_id)
