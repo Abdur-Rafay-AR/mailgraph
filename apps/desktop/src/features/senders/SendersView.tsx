@@ -585,7 +585,7 @@ export const SendersView: React.FC<SendersViewProps> = ({
               <div>
                 <span className="font-semibold">{bulkPreview.reversibility_note}</span>
                 <p className="text-[11px] text-blue-300/80 mt-0.5">
-                  No emails will be permanently deleted. Target messages will be safely moved to your local provider's {cleanupOperation} folder.
+                  Target messages will be moved to the Trash on your live Gmail/IMAP account and updated locally. You can undo this action at any time from Cleanup Studio.
                 </p>
               </div>
             </div>

@@ -419,7 +419,7 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
               </div>
 
               <p className="text-slate-300 leading-relaxed font-sans">
-                MailGraph will snapshot the original state of every affected message before executing. You can undo this operation at any time from the Audit Trail tab.
+                MailGraph will sync this action with your live mailbox (moving messages to Trash on Gmail/IMAP) and snapshot the original state in local storage. You can undo this operation at any time from the Audit Trail tab.
               </p>
 
               <div className="p-3 bg-bg-deep rounded border border-border-subtle space-y-1 font-mono text-[11px]">

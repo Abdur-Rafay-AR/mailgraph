@@ -135,11 +135,44 @@ class ActionEngine:
                 reversibility_note=reversibility_notes.get(operation_type, "Standard provider operation.")
             )
 
+    def _get_remote_provider(self, account_id: int):
+        """Retrieve and initialize live provider for an account if live credentials exist."""
+        with self.db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, provider, email_address, settings_json FROM accounts WHERE id = ?;", (account_id,))
+            acc_row = cursor.fetchone()
+            if not acc_row:
+                return None
+            
+            provider_type = acc_row["provider"]
+            email_addr = acc_row["email_address"]
+            
+            if provider_type in ("imap", "gmail"):
+                from backend.app.security.credential_store import CredentialStore
+                cred_json_str = CredentialStore().get_credentials(email_addr)
+                if not cred_json_str:
+                    return None
+                try:
+                    cred = json.loads(cred_json_str)
+                    if cred.get("provider") == "imap" or "password" in cred:
+                        from backend.app.providers.imap import ImapProvider
+                        return ImapProvider(
+                            host=cred.get("host", "imap.gmail.com"),
+                            username=cred.get("username", email_addr),
+                            password=cred.get("password"),
+                            port=cred.get("port", 993),
+                            use_ssl=cred.get("use_ssl", True)
+                        )
+                except Exception as ex:
+                    print(f"Failed to initialize remote provider for {email_addr}: {ex}")
+            return None
+
     def execute_action(
         self,
         account_id: int,
         operation_type: str,
-        ast: QueryAST
+        ast: QueryAST,
+        sync_remote: bool = True
     ) -> int:
         """
         Execute the confirmed operation on target messages.
@@ -235,6 +268,21 @@ class ActionEngine:
                     completed_at = datetime('now')
                 WHERE id = ?;
             """, (status, completed_count, failed_count, operation_id))
+
+            # If account is connected to live IMAP/Gmail, execute remote action on mailbox
+            if sync_remote:
+                remote_provider = self._get_remote_provider(account_id)
+                if remote_provider:
+                    target_pids = [r["provider_message_id"] for r in target_rows if r["provider_message_id"]]
+                    try:
+                        if operation_type == "trash":
+                            remote_provider.move_to_trash(target_pids)
+                        elif operation_type == "archive":
+                            remote_provider.archive_messages(target_pids)
+                    except Exception as ex:
+                        print(f"Warning: remote mailbox operation failed: {ex}")
+                    finally:
+                        remote_provider.disconnect()
             
             return operation_id
 
@@ -242,13 +290,16 @@ class ActionEngine:
         """Undo a previously executed operation by restoring original message folder state."""
         with self.db.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, status, undo_status FROM operations WHERE id = ?;", (operation_id,))
+            cursor.execute("SELECT id, account_id, operation_type, status, undo_status FROM operations WHERE id = ?;", (operation_id,))
             op_row = cursor.fetchone()
             if not op_row:
                 raise ValueError(f"Operation #{operation_id} not found.")
+
+            account_id = op_row["account_id"]
+            op_type = op_row["operation_type"]
                 
             cursor.execute("""
-                SELECT id, message_id, original_state_json, status 
+                SELECT id, message_id, provider_message_id, original_state_json, status 
                 FROM operation_items 
                 WHERE operation_id = ? AND status = 'success';
             """, (operation_id,))
@@ -256,9 +307,9 @@ class ActionEngine:
             
             restored_count = 0
             for item in items:
-                item_id = item[0]
-                message_id = item[1]
-                orig_state = json.loads(item[2])
+                item_id = item["id"]
+                message_id = item["message_id"]
+                orig_state = json.loads(item["original_state_json"])
                 orig_folder_id = orig_state.get("folder_id")
                 
                 cursor.execute("""
@@ -275,6 +326,17 @@ class ActionEngine:
                 SET status = 'undone', undo_status = 'restored'
                 WHERE id = ?;
             """, (operation_id,))
+
+            # Attempt remote undo on live server if supported
+            remote_provider = self._get_remote_provider(account_id)
+            if remote_provider and op_type == "trash":
+                try:
+                    pids = [r["provider_message_id"] for r in items if r["provider_message_id"]]
+                    remote_provider.restore_messages(pids, dest_folder="INBOX")
+                except Exception as ex:
+                    print(f"Warning: remote restore failed: {ex}")
+                finally:
+                    remote_provider.disconnect()
             
             return {
                 "operation_id": operation_id,

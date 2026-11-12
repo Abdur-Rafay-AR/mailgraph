@@ -38,3 +38,35 @@ def test_gmail_provider_capabilities():
     assert caps.supports_trash is True
     assert caps.supports_undo is True
     assert caps.supports_archive is True
+
+def test_imap_provider_remote_trash_and_archive_calls(monkeypatch):
+    provider = ImapProvider(
+        host="imap.gmail.com",
+        username="user@gmail.com",
+        password="secretpassword"
+    )
+    mock_client = MagicMock()
+    mock_client.uid.return_value = ("OK", [b"Success"])
+    provider.client = mock_client
+    monkeypatch.setattr(provider, "connect", lambda: True)
+    monkeypatch.setattr(provider, "_get_trash_folder_name", lambda: "[Gmail]/Trash")
+    monkeypatch.setattr(provider, "_get_archive_folder_name", lambda: "[Gmail]/All Mail")
+
+    pids = ["imap_INBOX_101", "imap_INBOX_102"]
+    
+    # 1. Test move to trash
+    trash_res = provider.move_to_trash(pids)
+    assert trash_res["status"] == "success"
+    assert trash_res["count"] == 2
+    mock_client.select.assert_called_with('"INBOX"', readonly=False)
+    mock_client.uid.assert_called_with("MOVE", "101,102", '"[Gmail]/Trash"')
+
+    # 2. Test archive messages
+    archive_res = provider.archive_messages(pids)
+    assert archive_res["status"] == "success"
+    assert archive_res["count"] == 2
+
+    # 3. Test restore messages (undo)
+    restore_res = provider.restore_messages(pids, dest_folder="INBOX")
+    assert restore_res["status"] == "success"
+    assert restore_res["count"] == 2
