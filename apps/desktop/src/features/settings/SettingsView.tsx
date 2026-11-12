@@ -9,7 +9,11 @@ import {
   Sparkles,
   Bot,
   AlertTriangle,
-  FolderOpen
+  FolderOpen,
+  Mail,
+  Server,
+  Key,
+  ExternalLink
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { Account, AppSettings, ProtectionRule } from '../../types/api';
@@ -23,10 +27,17 @@ export const SettingsView: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState<boolean>(true);
   const [addAccountModal, setAddAccountModal] = useState<boolean>(false);
-  const [selectedProvider, setSelectedProvider] = useState<'synthetic' | 'mbox' | 'imap' | 'gmail'>('synthetic');
+  const [selectedProvider, setSelectedProvider] = useState<'gmail' | 'imap' | 'synthetic' | 'mbox'>('gmail');
   const [syntheticCount, setSyntheticCount] = useState<number>(50);
   const [mboxPath, setMboxPath] = useState<string>('');
   const [loadingCreate, setLoadingCreate] = useState<boolean>(false);
+
+  // Gmail / IMAP state
+  const [imapEmail, setImapEmail] = useState<string>('');
+  const [imapPassword, setImapPassword] = useState<string>('');
+  const [imapHost, setImapHost] = useState<string>('imap.gmail.com');
+  const [imapPort, setImapPort] = useState<number>(993);
+  const [imapScanLimit, setImapScanLimit] = useState<number>(100);
 
   // Settings state
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -79,7 +90,44 @@ export const SettingsView: React.FC = () => {
   const handleCreateAccount = async () => {
     setLoadingCreate(true);
     try {
-      if (selectedProvider === 'synthetic') {
+      if (selectedProvider === 'gmail') {
+        if (!imapEmail.trim()) {
+          alert('Please enter your Gmail address.');
+          return;
+        }
+        if (!imapPassword.trim()) {
+          alert('Please enter your 16-character Google App Password.');
+          return;
+        }
+        const cleanPassword = imapPassword.trim().replace(/\s+/g, '');
+        const res = await api.connectImap({
+          display_name: `Gmail (${imapEmail.trim()})`,
+          email_address: imapEmail.trim(),
+          host: 'imap.gmail.com',
+          username: imapEmail.trim(),
+          password: cleanPassword,
+          port: 993,
+          use_ssl: true,
+          initial_scan_limit: imapScanLimit,
+        });
+        alert(`Successfully connected ${res.email_address}! Scanned and indexed ${res.inserted_count} messages locally.`);
+      } else if (selectedProvider === 'imap') {
+        if (!imapEmail.trim() || !imapPassword.trim() || !imapHost.trim()) {
+          alert('Please fill in server host, email address, and password.');
+          return;
+        }
+        const res = await api.connectImap({
+          display_name: `IMAP (${imapEmail.trim()})`,
+          email_address: imapEmail.trim(),
+          host: imapHost.trim(),
+          username: imapEmail.trim(),
+          password: imapPassword.trim(),
+          port: imapPort || 993,
+          use_ssl: true,
+          initial_scan_limit: imapScanLimit,
+        });
+        alert(`Successfully connected ${res.email_address}! Scanned and indexed ${res.inserted_count} messages locally.`);
+      } else if (selectedProvider === 'synthetic') {
         await api.generateSynthetic({
           display_name: 'Demo Mailbox',
           email_address: `demo_${Date.now()}@mailgraph.local`,
@@ -470,6 +518,38 @@ export const SettingsView: React.FC = () => {
           {/* Source Selector */}
           <div className="grid grid-cols-2 gap-2">
             <button
+              onClick={() => setSelectedProvider('gmail')}
+              className={`p-3 rounded border text-left transition-colors ${
+                selectedProvider === 'gmail'
+                  ? 'bg-brand/15 border-brand text-brand-light'
+                  : 'bg-bg-deep border-border-muted text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <div className="font-semibold text-slate-100 flex items-center gap-1.5">
+                <Mail className="w-4 h-4 text-emerald-400" /> Gmail (Direct Link)
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                Connect via Google App Password in 15 seconds. No cloud APIs or console setup needed.
+              </div>
+            </button>
+
+            <button
+              onClick={() => setSelectedProvider('imap')}
+              className={`p-3 rounded border text-left transition-colors ${
+                selectedProvider === 'imap'
+                  ? 'bg-brand/15 border-brand text-brand-light'
+                  : 'bg-bg-deep border-border-muted text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <div className="font-semibold text-slate-100 flex items-center gap-1.5">
+                <Server className="w-4 h-4 text-cyan-400" /> Standard IMAP
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                Connect to Outlook, Yahoo, iCloud, Fastmail, or custom mail servers.
+              </div>
+            </button>
+
+            <button
               onClick={() => setSelectedProvider('synthetic')}
               className={`p-3 rounded border text-left transition-colors ${
                 selectedProvider === 'synthetic'
@@ -502,7 +582,121 @@ export const SettingsView: React.FC = () => {
             </button>
           </div>
 
-          {selectedProvider === 'synthetic' ? (
+          {/* Form details per provider */}
+          {selectedProvider === 'gmail' && (
+            <div className="space-y-3 pt-2">
+              <div className="p-2.5 bg-emerald-950/20 border border-emerald-800/40 rounded text-xs text-emerald-200 space-y-1">
+                <div className="font-semibold flex items-center gap-1 text-[11px]">
+                  <Key className="w-3.5 h-3.5" /> Direct Google Account Setup (30 Seconds):
+                </div>
+                <ol className="text-[11px] text-emerald-300/80 list-decimal list-inside space-y-0.5">
+                  <li>Visit <span className="font-mono text-emerald-100">myaccount.google.com/apppasswords</span></li>
+                  <li>Enter app name <strong>MailGraph</strong> and click Create</li>
+                  <li>Copy the 16-letter password and paste it below. Credentials stay safely in your OS Keyring.</li>
+                </ol>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">GMAIL ADDRESS</label>
+                <input
+                  type="email"
+                  value={imapEmail}
+                  onChange={(e) => setImapEmail(e.target.value)}
+                  placeholder="yourname@gmail.com"
+                  className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">GOOGLE APP PASSWORD (16 CHARACTERS)</label>
+                <input
+                  type="password"
+                  value={imapPassword}
+                  onChange={(e) => setImapPassword(e.target.value)}
+                  placeholder="xxxx xxxx xxxx xxxx"
+                  className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">INITIAL MESSAGES TO SCAN & INDEX</label>
+                <select
+                  value={imapScanLimit}
+                  onChange={(e) => setImapScanLimit(Number(e.target.value))}
+                  className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none"
+                >
+                  <option value={50}>50 most recent messages (Fastest)</option>
+                  <option value={100}>100 most recent messages (Recommended)</option>
+                  <option value={250}>250 most recent messages</option>
+                  <option value={500}>500 most recent messages</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {selectedProvider === 'imap' && (
+            <div className="space-y-3 pt-2">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2">
+                  <label className="block text-slate-400 font-mono text-[11px] mb-1">IMAP HOST</label>
+                  <input
+                    type="text"
+                    value={imapHost}
+                    onChange={(e) => setImapHost(e.target.value)}
+                    placeholder="imap.mail.me.com"
+                    className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-mono text-[11px] mb-1">PORT (SSL)</label>
+                  <input
+                    type="number"
+                    value={imapPort}
+                    onChange={(e) => setImapPort(Number(e.target.value))}
+                    className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">EMAIL ADDRESS / USERNAME</label>
+                <input
+                  type="text"
+                  value={imapEmail}
+                  onChange={(e) => setImapEmail(e.target.value)}
+                  placeholder="user@domain.com"
+                  className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">PASSWORD / APP PASSWORD</label>
+                <input
+                  type="password"
+                  value={imapPassword}
+                  onChange={(e) => setImapPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">INITIAL MESSAGES TO SCAN</label>
+                <select
+                  value={imapScanLimit}
+                  onChange={(e) => setImapScanLimit(Number(e.target.value))}
+                  className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none"
+                >
+                  <option value={50}>50 messages</option>
+                  <option value={100}>100 messages (Recommended)</option>
+                  <option value={250}>250 messages</option>
+                  <option value={500}>500 messages</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {selectedProvider === 'synthetic' && (
             <div className="space-y-2 pt-2">
               <label className="block text-slate-400 font-mono text-[11px]">NUMBER OF MESSAGES TO SIMULATE</label>
               <select
@@ -516,7 +710,9 @@ export const SettingsView: React.FC = () => {
                 <option value={500}>500 messages (Benchmark)</option>
               </select>
             </div>
-          ) : (
+          )}
+
+          {selectedProvider === 'mbox' && (
             <div className="space-y-2 pt-2">
               <label className="block text-slate-400 font-mono text-[11px]">MBOX ARCHIVE FILE PATH</label>
               <div className="flex gap-2">
@@ -539,7 +735,7 @@ export const SettingsView: React.FC = () => {
               Cancel
             </Button>
             <Button size="sm" variant="primary" loading={loadingCreate} onClick={handleCreateAccount}>
-              Start Ingestion
+              {selectedProvider === 'gmail' || selectedProvider === 'imap' ? 'Connect & Ingest' : 'Start Ingestion'}
             </Button>
           </div>
         </div>

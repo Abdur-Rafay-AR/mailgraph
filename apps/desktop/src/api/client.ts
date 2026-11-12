@@ -62,6 +62,11 @@ export const api = {
     request<{ status: string; inserted_count: number }>(`/accounts/mbox/import?account_id=${accountId}&file_path=${encodeURIComponent(filePath)}${limit ? `&limit=${limit}` : ''}`, {
       method: 'POST',
     }),
+  connectImap: (data: { display_name: string; email_address: string; host: string; username: string; password: string; port?: number; use_ssl?: boolean; initial_scan_limit?: number }) =>
+    request<{ status: string; account_id: number; email_address: string; inserted_count: number }>(`/accounts/imap/connect?initial_scan_limit=${data.initial_scan_limit ?? 100}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // Senders
   getSenders: (params: {

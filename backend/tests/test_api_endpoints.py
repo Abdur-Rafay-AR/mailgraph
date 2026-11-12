@@ -158,3 +158,26 @@ def test_insights_endpoint():
     assert res.status_code == 200
     insights = res.json()
     assert isinstance(insights, list)
+
+def test_imap_connect_endpoint(monkeypatch):
+    from unittest.mock import MagicMock
+    from backend.app.providers.imap import ImapProvider
+
+    mock_connect = MagicMock()
+    monkeypatch.setattr(ImapProvider, "connect", mock_connect)
+    monkeypatch.setattr(ImapProvider, "stream_messages", lambda self, folder_id, limit: [])
+
+    res = client.post("/api/accounts/imap/connect", json={
+        "display_name": "My Gmail",
+        "email_address": "testuser@gmail.com",
+        "host": "imap.gmail.com",
+        "username": "testuser@gmail.com",
+        "password": "abcdefghijklmnop",
+        "port": 993,
+        "use_ssl": True
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert data["email_address"] == "testuser@gmail.com"
+    assert data["account_id"] > 0

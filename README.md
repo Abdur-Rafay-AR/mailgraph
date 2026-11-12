@@ -145,6 +145,34 @@ npm run build
 
 ---
 
+## Connecting Your Real Mailbox
+
+MailGraph provides two fast ways to index your real mailbox:
+
+### Option 1: Direct In-App Link (Recommended for Gmail & IMAP)
+1. In the MailGraph desktop app, navigate to **Settings (Alt + 9) &rarr; Add Mailbox Source**.
+2. Select **Gmail (Direct Link)** or **Standard IMAP**.
+3. For Gmail:
+   - Ensure 2-Step Verification is active on your Google Account.
+   - Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
+   - Create a new App Password named `MailGraph`.
+   - Paste your Gmail address and the 16-character App Password into MailGraph.
+4. Click **Connect & Ingest**. Credentials are saved securely into your native OS Keyring (never in plain text), and your emails are indexed directly into local SQLite.
+
+### Option 2: CLI Linker Script (`scripts/connect_gmail.py`)
+Run the interactive terminal linking wizard:
+```bash
+python scripts/connect_gmail.py
+```
+This utility:
+- Prompts for your Google email and App Password (or OAuth `credentials.json` if preferred).
+- Securely tests the SSL connection.
+- Stores credentials into your OS Keyring.
+- Streams and indexes your initial batch of messages directly into `mailgraph.db`.
+- When you launch the UI, your inbox is already indexed and ready to explore!
+
+---
+
 ## Documentation
 
 - [Product Specification (`agent-spec.md`)](agent-spec.md)

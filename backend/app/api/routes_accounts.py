@@ -123,3 +123,62 @@ def import_mbox(account_id: int, file_path: str, limit: Optional[int] = None):
         "skipped_count": result.skipped_count,
         "failed_count": result.failed_count
     }
+
+@router.post("/imap/connect")
+def connect_imap(req: ImapConnectRequest, initial_scan_limit: Optional[int] = 100):
+    """Authenticate and link a Gmail or IMAP account using an App Password."""
+    from backend.app.security.credential_store import CredentialStore
+    
+    # 1. Test IMAP connection
+    provider = ImapProvider(
+        host=req.host,
+        username=req.username,
+        password=req.password,
+        port=req.port,
+        use_ssl=req.use_ssl
+    )
+    try:
+        provider.connect()
+    except Exception as ex:
+        raise HTTPException(status_code=400, detail=f"Failed to connect to {req.host}: {str(ex)}")
+
+    # 2. Store credentials in OS Keyring
+    cred_store = CredentialStore()
+    cred_json = json.dumps({
+        "provider": "imap",
+        "host": req.host,
+        "port": req.port,
+        "username": req.username,
+        "password": req.password
+    })
+    cred_store.save_credentials(req.email_address, cred_json)
+
+    # 3. Register in SQLite
+    db = get_database()
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM accounts WHERE email_address = ?;", (req.email_address,))
+        row = cursor.fetchone()
+        if row:
+            account_id = row[0]
+            cursor.execute("UPDATE accounts SET status = 'active', last_sync_at = datetime('now') WHERE id = ?;", (account_id,))
+        else:
+            cursor.execute("""
+                INSERT INTO accounts (provider, display_name, email_address, settings_json)
+                VALUES ('imap', ?, ?, ?);
+            """, (req.display_name, req.email_address, json.dumps({"host": req.host, "port": req.port})))
+            account_id = cursor.lastrowid
+
+    # 4. Run initial scan if requested
+    inserted = 0
+    if initial_scan_limit and initial_scan_limit > 0:
+        pipeline = IngestionPipeline(db)
+        res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=initial_scan_limit))
+        inserted = res.inserted_count
+
+    return {
+        "status": "success",
+        "account_id": account_id,
+        "email_address": req.email_address,
+        "inserted_count": inserted
+    }
