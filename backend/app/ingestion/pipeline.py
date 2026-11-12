@@ -149,12 +149,14 @@ class IngestionPipeline:
                         res.inserted_count += 1
                         batch_count += 1
                         
-                        # Commit periodic batches (every 100 messages) for memory & responsiveness
+                        # Report smooth progress every 15 items
+                        if progress_callback and res.scanned_count % 15 == 0:
+                            progress_callback(res)
+
+                        # Commit periodic transaction batches (every 100 messages) for fast disk writes
                         if batch_count >= 100:
                             conn.commit()
                             batch_count = 0
-                            if progress_callback:
-                                progress_callback(res)
                                 
                     except Exception as ex:
                         res.failed_count += 1

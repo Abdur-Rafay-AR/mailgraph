@@ -95,7 +95,26 @@ class ImapProvider(AbstractMailProvider):
                 
         return folders
 
-    def stream_messages(self, folder_id: Optional[str] = None, limit: Optional[int] = None) -> Generator[ParsedEmail, None, None]:
+    def get_message_count(self, folder_id: str = "INBOX") -> int:
+        """Return total message count in a folder with zero body overhead."""
+        if not self.client:
+            self.connect()
+        assert self.client is not None
+        try:
+            typ, data = self.client.select(f'"{folder_id}"', readonly=True)
+            if typ == "OK" and data and data[0]:
+                return int(data[0])
+        except Exception:
+            pass
+        return 0
+
+    def stream_messages(
+        self,
+        folder_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        batch_size: int = 50
+    ) -> Generator[ParsedEmail, None, None]:
+        """Stream parsed emails using high-throughput multi-UID batch fetching."""
         if not self.client:
             self.connect()
         assert self.client is not None
@@ -104,24 +123,56 @@ class ImapProvider(AbstractMailProvider):
         self.client.select(f'"{target_folder}"', readonly=True)
         
         typ, msg_nums = self.client.uid("SEARCH", None, "ALL")
-        if typ != "OK" or not msg_nums[0]:
+        if typ != "OK" or not msg_nums or not msg_nums[0]:
             return
             
-        uids = msg_nums[0].split()
-        if limit:
-            uids = uids[-limit:]
+        all_uids = msg_nums[0].split()
+        if not all_uids:
+            return
+
+        if limit and limit < len(all_uids):
+            # Take the most recent 'limit' messages
+            selected_uids = all_uids[-limit:]
+        else:
+            selected_uids = all_uids
             
-        for uid_bytes in reversed(uids):
-            uid_str = uid_bytes.decode("ascii")
+        # Reverse so most recent messages arrive first
+        uids_list = [u.decode("ascii") for u in reversed(selected_uids)]
+
+        # Fetch in multi-UID batches (50 messages per round-trip instead of 1)
+        for i in range(0, len(uids_list), batch_size):
+            chunk = uids_list[i:i + batch_size]
+            uid_set = ",".join(chunk)
+
             try:
                 # Use BODY.PEEK[] so message read state is NOT changed during scan!
-                res, data = self.client.uid("FETCH", uid_str, "(BODY.PEEK[])")
-                if res == "OK" and data and isinstance(data[0], tuple):
-                    raw_email = data[0][1]
-                    parsed = self.parser.parse_bytes(raw_email, provider_message_id=f"imap_{target_folder}_{uid_str}")
-                    yield parsed
+                res, data = self.client.uid("FETCH", uid_set, "(BODY.PEEK[])")
+                if res != "OK" or not data:
+                    continue
+
+                for item in data:
+                    if isinstance(item, tuple) and len(item) == 2:
+                        meta_bytes, raw_email = item
+                        meta_str = meta_bytes.decode("ascii", errors="ignore")
+                        m = re.search(r"UID\s+(\d+)", meta_str)
+                        uid_str = m.group(1) if m else "unknown"
+
+                        try:
+                            parsed = self.parser.parse_bytes(raw_email, provider_message_id=f"imap_{target_folder}_{uid_str}")
+                            yield parsed
+                        except Exception:
+                            continue
             except Exception:
-                continue
+                # Resilient fallback: fetch individually if a large batch fails (e.g. huge attachment timeout)
+                for single_uid in chunk:
+                    try:
+                        s_res, s_data = self.client.uid("FETCH", single_uid, "(BODY.PEEK[])")
+                        if s_res == "OK" and s_data and isinstance(s_data[0], tuple):
+                            raw_email = s_data[0][1]
+                            parsed = self.parser.parse_bytes(raw_email, provider_message_id=f"imap_{target_folder}_{single_uid}")
+                            yield parsed
+                    except Exception:
+                        continue
 
     def _parse_provider_id(self, pmid: str) -> Optional[tuple[str, str]]:
         """Extract folder and UID from imap_{folder}_{uid} string."""

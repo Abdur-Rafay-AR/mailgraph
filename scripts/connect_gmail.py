@@ -7,6 +7,7 @@ Allows users to directly connect their real Gmail account using either:
 
 import sys
 import os
+import time
 import getpass
 import json
 import imaplib
@@ -114,19 +115,39 @@ def connect_via_app_password():
     print("\n" + "-" * 50)
     start_scan = input("Would you like to import recent emails into MailGraph now? (y/n) [y]: ").strip().lower()
     if start_scan in ("", "y", "yes"):
-        limit_str = input("How many recent messages to index? (e.g. 50, 200, 1000) [100]: ").strip()
-        limit = int(limit_str) if limit_str.isdigit() else 100
-
-        print(f"\n-> Streaming {limit} recent messages from Gmail INBOX (read-only)...")
         provider = ImapProvider("imap.gmail.com", email_addr, password, port=993, use_ssl=True)
+        provider.connect()
+        total_inbox = provider.get_message_count("INBOX")
+
+        print(f"\n✓ Connected! Your Gmail INBOX currently contains {total_inbox:,} total messages.")
+        limit_str = input(f"How many recent messages to index? (1 - {total_inbox:,}, or 'all') [all]: ").strip()
+        if limit_str.lower() in ("all", "max", ""):
+            limit = total_inbox
+        else:
+            limit = int(limit_str) if limit_str.isdigit() else total_inbox
+        
+        target_count = min(limit, total_inbox)
+
+        print(f"\n-> High-throughput batch streaming {target_count:,} messages from Gmail INBOX (read-only)...")
         pipeline = IngestionPipeline(db)
+        start_time = time.time()
 
         def progress(res):
-            print(f"   Indexed: {res.inserted_count} msgs | Skipped: {res.skipped_count} | Errors: {res.failed_count}", end="\r")
+            elapsed = max(0.1, time.time() - start_time)
+            speed = res.scanned_count / elapsed
+            pct = min(100.0, (res.scanned_count / target_count) * 100) if target_count > 0 else 0
+            print(f"   Indexed: {res.inserted_count:,}/{target_count:,} ({pct:.1f}%) | {speed:.1f} msg/sec | Skipped: {res.skipped_count:,}   ", end="\r")
 
-        result = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=limit), progress_callback=progress)
-        print(f"\n✓ Scan complete! Inserted {result.inserted_count} new messages into your local database.")
-        print("Launch the desktop app with 'python scripts/run_desktop.py' to explore your graph and senders!")
+        result = pipeline.ingest_messages(
+            account_id,
+            provider.stream_messages(folder_id="INBOX", limit=target_count, batch_size=50),
+            progress_callback=progress
+        )
+
+        total_elapsed = time.time() - start_time
+        print(f"\n✓ Ingestion complete in {total_elapsed:.1f}s ({result.scanned_count / max(0.1, total_elapsed):.1f} msg/sec)!")
+        print(f"✓ Indexed {result.inserted_count:,} messages ({result.skipped_count:,} existing duplicates skipped, {result.failed_count:,} errors).")
+        print("\nLaunch the desktop app with 'run.cmd' (Option 1) to explore your graph and senders!")
 
 def connect_via_oauth():
     print("\n--- Method 2: Google Cloud OAuth 2.0 ---")
