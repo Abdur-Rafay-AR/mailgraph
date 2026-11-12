@@ -45,7 +45,10 @@ class GraphService:
         with self.db.connect() as conn:
             cursor = conn.cursor()
             
-            where_conditions = ["1=1"]
+            where_conditions = [
+                "1=1",
+                "(m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))"
+            ]
             params: List[Any] = []
             
             if account_id:

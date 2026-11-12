@@ -61,7 +61,7 @@ def get_overview(conn: sqlite3.Connection = Depends(get_db)):
     """Mailbox overview statistics: counts, date coverage, storage, and top senders."""
     cursor = conn.cursor()
     
-    # Message count, unread, storage
+    # Message count, unread, storage for active mailbox (excluding trash/spam)
     cursor.execute("""
         SELECT 
             COUNT(id) as total_messages,
@@ -69,25 +69,33 @@ def get_overview(conn: sqlite3.Connection = Depends(get_db)):
             COALESCE(SUM(size_bytes), 0) as total_bytes,
             MIN(received_at) as earliest_date,
             MAX(received_at) as latest_date
-        FROM messages;
+        FROM messages
+        WHERE folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'));
     """)
     m_stats = cursor.fetchone()
     
-    # Senders & domains count
-    cursor.execute("SELECT COUNT(id) as total_senders, COUNT(DISTINCT domain) as total_domains FROM senders;")
+    # Active Senders & domains count
+    cursor.execute("""
+        SELECT COUNT(DISTINCT s.id) as total_senders, COUNT(DISTINCT s.domain) as total_domains 
+        FROM senders s
+        JOIN messages m ON s.id = m.sender_id
+        WHERE m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'));
+    """)
     s_stats = cursor.fetchone()
     
     # Accounts count
     cursor.execute("SELECT COUNT(id) FROM accounts;")
     acc_count = cursor.fetchone()[0]
     
-    # Top 5 senders by message count
+    # Top 5 senders by active message count
     cursor.execute("""
         SELECT s.id, s.normalized_address, s.display_name, s.domain,
                COUNT(m.id) as count, COALESCE(SUM(m.size_bytes), 0) as bytes
         FROM senders s
         JOIN messages m ON s.id = m.sender_id
+        WHERE m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'))
         GROUP BY s.id
+        HAVING count > 0
         ORDER BY count DESC
         LIMIT 5;
     """)
@@ -96,11 +104,13 @@ def get_overview(conn: sqlite3.Connection = Depends(get_db)):
         for r in cursor.fetchall()
     ]
     
-    # Category counts
+    # Category counts for active messages
     cursor.execute("""
         SELECT c.name, c.color, COUNT(mc.message_id) as count
         FROM categories c
-        LEFT JOIN message_categories mc ON c.id = mc.category_id
+        JOIN message_categories mc ON c.id = mc.category_id
+        JOIN messages m ON mc.message_id = m.id
+        WHERE m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'))
         GROUP BY c.id
         HAVING count > 0
         ORDER BY count DESC;

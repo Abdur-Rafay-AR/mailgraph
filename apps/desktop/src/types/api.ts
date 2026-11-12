@@ -160,6 +160,7 @@ export interface GraphNodeData {
   display_name?: string;
   thread_id?: number;
   message_count?: number;
+  sender_count?: number;
   total_bytes?: number;
   unread_count?: number;
   first_seen?: string;

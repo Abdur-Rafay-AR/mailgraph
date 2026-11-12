@@ -49,13 +49,19 @@ def list_senders(
         params.append(category)
         
     where_sql = " AND ".join(where_clauses)
+    active_folder_filter = "(m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))"
     
-    # Total senders count
-    count_sql = f"SELECT COUNT(*) FROM senders s WHERE {where_sql};"
+    # Total active senders count (only senders with active non-trash messages)
+    count_sql = f"""
+        SELECT COUNT(DISTINCT s.id) 
+        FROM senders s 
+        JOIN messages m ON s.id = m.sender_id AND {active_folder_filter}
+        WHERE {where_sql};
+    """
     cursor.execute(count_sql, params)
     total_count = cursor.fetchone()[0]
     
-    # Query aggregated sender metrics
+    # Query aggregated active sender metrics
     data_sql = f"""
         SELECT 
             s.id,
@@ -72,15 +78,16 @@ def list_senders(
                 SELECT c.name FROM message_categories mc2
                 JOIN categories c ON mc2.category_id = c.id
                 JOIN messages m3 ON mc2.message_id = m3.id
-                WHERE m3.sender_id = s.id
+                WHERE m3.sender_id = s.id AND (m3.folder_id IS NULL OR m3.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
                 GROUP BY c.id
                 ORDER BY COUNT(*) DESC
                 LIMIT 1
             ) as dominant_category
         FROM senders s
-        LEFT JOIN messages m ON s.id = m.sender_id
+        JOIN messages m ON s.id = m.sender_id AND {active_folder_filter}
         WHERE {where_sql}
         GROUP BY s.id
+        HAVING message_count > 0
         ORDER BY {sort_by} {order_dir}
         LIMIT ? OFFSET ?;
     """
@@ -126,13 +133,15 @@ def get_sender_detail(sender_id: int, conn: sqlite3.Connection = Depends(get_db)
     cursor.execute("""
         SELECT COUNT(id) as count, COALESCE(SUM(size_bytes), 0) as total_size,
                COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread
-        FROM messages WHERE sender_id = ?;
+        FROM messages 
+        WHERE sender_id = ? AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')));
     """, (sender_id,))
     stats = cursor.fetchone()
     
     cursor.execute("""
         SELECT id, subject, received_at, size_bytes, is_read, is_starred
-        FROM messages WHERE sender_id = ?
+        FROM messages 
+        WHERE sender_id = ? AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
         ORDER BY received_at DESC LIMIT 20;
     """, (sender_id,))
     recent_messages = [
@@ -197,9 +206,17 @@ def bulk_cleanup_senders_preview(req: BulkSenderCleanupRequest):
         cursor.execute(f"SELECT normalized_address FROM senders WHERE id IN ({placeholders});", req.sender_ids)
         addresses = [r[0] for r in cursor.fetchall()]
         
-        cursor.execute("SELECT id FROM accounts LIMIT 1;")
-        acc_row = cursor.fetchone()
-        account_id = acc_row[0] if acc_row else 1
+        cursor.execute(f"""
+            SELECT DISTINCT account_id FROM messages 
+            WHERE sender_id IN ({placeholders}) 
+              AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')));
+        """, req.sender_ids)
+        acc_rows = cursor.fetchall()
+        target_account_ids = [r[0] for r in acc_rows if r[0] is not None]
+        if not target_account_ids:
+            cursor.execute("SELECT id FROM accounts ORDER BY id DESC LIMIT 1;")
+            acc_row = cursor.fetchone()
+            target_account_ids = [acc_row[0]] if acc_row else [1]
     
     if not addresses:
         raise HTTPException(status_code=404, detail="None of the specified senders were found.")
@@ -212,18 +229,37 @@ def bulk_cleanup_senders_preview(req: BulkSenderCleanupRequest):
         exclude_protected=req.exclude_protected
     )
     
-    preview = engine.calculate_preview(account_id, req.operation_type, ast)
+    target_count = 0
+    affected_threads_count = 0
+    total_size_bytes = 0
+    protected_excluded_count = 0
+    all_top_senders = []
+    all_samples = []
+    reversible = True
+    reversibility_note = ""
+
+    for acc_id in target_account_ids:
+        preview = engine.calculate_preview(acc_id, req.operation_type, ast)
+        target_count += preview.target_count
+        affected_threads_count += preview.affected_threads_count
+        total_size_bytes += preview.total_size_bytes
+        protected_excluded_count += preview.protected_excluded_count
+        all_top_senders.extend(preview.top_senders)
+        all_samples.extend(preview.samples)
+        reversible = preview.reversible
+        reversibility_note = preview.reversibility_note
+
     return {
         "operation_type": req.operation_type,
         "selected_sender_count": len(addresses),
-        "target_count": preview.target_count,
-        "affected_threads_count": preview.affected_threads_count,
-        "total_size_bytes": preview.total_size_bytes,
-        "protected_excluded_count": preview.protected_excluded_count,
-        "top_senders": preview.top_senders,
-        "samples": preview.samples,
-        "reversible": preview.reversible,
-        "reversibility_note": preview.reversibility_note,
+        "target_count": target_count,
+        "affected_threads_count": affected_threads_count,
+        "total_size_bytes": total_size_bytes,
+        "protected_excluded_count": protected_excluded_count,
+        "top_senders": all_top_senders[:5],
+        "samples": all_samples[:10],
+        "reversible": reversible,
+        "reversibility_note": reversibility_note,
         "compiled_ast": {
             "all": [{"field": "sender_address", "op": "in", "value": addresses}],
             "exclude_protected": req.exclude_protected
@@ -240,9 +276,17 @@ def bulk_cleanup_senders_execute(req: BulkSenderCleanupRequest):
         cursor.execute(f"SELECT normalized_address FROM senders WHERE id IN ({placeholders});", req.sender_ids)
         addresses = [r[0] for r in cursor.fetchall()]
         
-        cursor.execute("SELECT id FROM accounts LIMIT 1;")
-        acc_row = cursor.fetchone()
-        account_id = acc_row[0] if acc_row else 1
+        cursor.execute(f"""
+            SELECT DISTINCT account_id FROM messages 
+            WHERE sender_id IN ({placeholders}) 
+              AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')));
+        """, req.sender_ids)
+        acc_rows = cursor.fetchall()
+        target_account_ids = [r[0] for r in acc_rows if r[0] is not None]
+        if not target_account_ids:
+            cursor.execute("SELECT id FROM accounts ORDER BY id DESC LIMIT 1;")
+            acc_row = cursor.fetchone()
+            target_account_ids = [acc_row[0]] if acc_row else [1]
     
     if not addresses:
         raise HTTPException(status_code=404, detail="No matching senders.")
@@ -255,5 +299,8 @@ def bulk_cleanup_senders_execute(req: BulkSenderCleanupRequest):
         exclude_protected=req.exclude_protected
     )
     
-    op_id = engine.execute_action(account_id, req.operation_type, ast)
-    return {"status": "completed", "operation_id": op_id}
+    last_op_id = None
+    for acc_id in target_account_ids:
+        last_op_id = engine.execute_action(acc_id, req.operation_type, ast)
+        
+    return {"status": "completed", "operation_id": last_op_id}

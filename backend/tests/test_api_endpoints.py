@@ -181,3 +181,37 @@ def test_imap_connect_endpoint(monkeypatch):
     assert data["status"] == "success"
     assert data["email_address"] == "testuser@gmail.com"
     assert data["account_id"] > 0
+
+
+def test_senders_cleaned_disappear_from_list_and_overview():
+    # 1. Generate synthetic mailbox
+    seed = random.randint(10000, 99999)
+    res = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Disappearing Sender Test",
+        "email_address": f"disappear_{seed}@local.box",
+        "message_count": 15,
+        "seed": seed
+    })
+    assert res.status_code == 200
+
+    # 2. Get list of senders
+    senders_res = client.get("/api/senders")
+    assert senders_res.status_code == 200
+    senders_list = senders_res.json()["items"]
+    assert len(senders_list) > 0
+    target_sender = senders_list[0]
+    target_sender_id = target_sender["id"]
+    target_address = target_sender["normalized_address"]
+
+    # 3. Clean up all messages from target sender
+    clean_res = client.post("/api/senders/bulk-cleanup-execute", json={
+        "sender_ids": [target_sender_id],
+        "operation_type": "trash"
+    })
+    assert clean_res.status_code == 200
+
+    # 4. Senders list must immediately exclude target sender
+    refreshed_senders = client.get("/api/senders").json()["items"]
+    refreshed_ids = [s["id"] for s in refreshed_senders]
+    assert target_sender_id not in refreshed_ids
+

@@ -104,6 +104,11 @@ class QueryCompiler:
                 AND messages.is_important = 0
             )"""
             where_clauses.append(prot_clause)
+
+        # 7. Exclude trash/spam from active mailbox searches unless explicitly requested
+        has_folder_filter = any(c.field in ("folder_id", "folder", "folder_type") for c in ast.all + ast.any)
+        if not has_folder_filter:
+            where_clauses.append("(messages.folder_id IS NULL OR messages.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))")
             
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
         
