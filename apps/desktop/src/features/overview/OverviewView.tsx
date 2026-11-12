@@ -74,7 +74,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         <div className="p-6 rounded-lg bg-bg-surface border border-brand/40 shadow-xl space-y-3">
           <div className="flex items-center gap-2.5 text-brand-light font-semibold text-sm">
             <Sparkles className="w-5 h-5 text-amber-400" />
-            Welcome to MailGraph — No mailbox data indexed yet
+            Welcome to MailGraph: No mailbox data indexed yet
           </div>
           <p className="text-xs text-slate-300 leading-relaxed max-w-2xl">
             MailGraph runs entirely offline on your local machine. You can import an offline MBOX archive, connect your Gmail or IMAP account, or instantly generate realistic synthetic demo data to test search, interactive graphs, and safe bulk cleanup workflows.
@@ -147,7 +147,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             <Clock className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xs font-mono font-semibold text-slate-200 mt-2 truncate">
-            {stats?.earliest_date?.slice(0, 10) || 'N/A'} — {stats?.latest_date?.slice(0, 10) || 'N/A'}
+            {stats?.earliest_date?.slice(0, 10) || 'N/A'} to {stats?.latest_date?.slice(0, 10) || 'N/A'}
           </div>
           <div className="text-[11px] text-slate-500 font-mono mt-1">
             Continuous history span
@@ -228,7 +228,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                         className="h-full rounded-full transition-all duration-300"
                         style={{
                           width: `${pct}%`,
-                          backgroundColor: cat.color || '#0284c7',
+                          backgroundColor: cat.color || '#9061f9',
                         }}
                       />
                     </div>

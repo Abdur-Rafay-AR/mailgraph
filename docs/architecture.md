@@ -1,4 +1,4 @@
-# MailGraph — Technical Architecture
+# MailGraph: Technical Architecture
 
 ## 1. Overview
 

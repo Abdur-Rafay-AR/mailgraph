@@ -28,7 +28,7 @@ from backend.app.ingestion.pipeline import IngestionPipeline
 
 def print_banner():
     print("=" * 65)
-    print("        MailGraph — Direct Gmail Account Linker")
+    print("        MailGraph: Direct Gmail Account Linker")
     print("=" * 65)
     print("All email data and credentials remain strictly on your local machine.")
     print("=" * 65)
@@ -227,7 +227,7 @@ def connect_via_oauth():
 def main():
     print_banner()
     print("Select how you want to link your Gmail account:")
-    print("  [1] Gmail App Password (Fastest — 10 seconds, zero Google Cloud setup, 100% local)")
+    print("  [1] Gmail App Password (Fastest: 10 seconds, zero Google Cloud setup, 100% local)")
     print("  [2] Google Cloud OAuth 2.0 (Developer Console setup)")
     print("  [3] Exit\n")
 

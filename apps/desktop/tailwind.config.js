@@ -9,21 +9,21 @@ export default {
     extend: {
       colors: {
         bg: {
-          deep: '#090d16',
-          surface: '#0f172a',
-          elevated: '#1e293b',
-          highlight: '#334155',
+          deep: '#0c0814',
+          surface: '#140e26',
+          elevated: '#1f1638',
+          highlight: '#2d2050',
         },
         border: {
-          subtle: '#1e293b',
-          muted: '#334155',
-          active: '#475569',
+          subtle: '#261a46',
+          muted: '#3d2b6e',
+          active: '#6d45ba',
         },
         brand: {
-          DEFAULT: '#0284c7', // sky-600
-          hover: '#0369a1',
-          light: '#38bdf8',
-          accent: '#06b6d4',
+          DEFAULT: '#9061f9', // violet-500
+          hover: '#7e3af2',   // violet-600
+          light: '#c084fc',   // violet-400
+          accent: '#e879f9',  // fuchsia-400
         },
       },
       fontFamily: {

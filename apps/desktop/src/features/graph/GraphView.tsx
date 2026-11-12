@@ -88,8 +88,8 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'node[node_type = "hub"]',
             style: {
-              'background-color': '#0284c7',
-              'border-color': '#38bdf8',
+              'background-color': '#9061f9',
+              'border-color': '#c084fc',
               'border-width': 3,
               width: '45px',
               height: '45px',
@@ -99,9 +99,9 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'node:selected',
             style: {
-              'border-color': '#38bdf8',
+              'border-color': '#c084fc',
               'border-width': 4,
-              'underlay-color': '#0284c7',
+              'underlay-color': '#9061f9',
               'underlay-padding': 4,
               'underlay-opacity': 0.4,
             },
@@ -113,7 +113,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
                 const w = ele.data('weight') || 1;
                 return `${Math.min(4, Math.max(1, Math.log2(w + 1)))}px`;
               },
-              'line-color': '#334155',
+              'line-color': '#3d2b6e',
               'curve-style': 'bezier',
               opacity: 0.6,
             },
@@ -121,7 +121,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'edge:selected',
             style: {
-              'line-color': '#38bdf8',
+              'line-color': '#c084fc',
               opacity: 1,
             },
           },

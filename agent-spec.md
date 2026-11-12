@@ -1,4 +1,4 @@
-# Mailgraph — Agent Specification
+# Mailgraph: Agent Specification
 
 > **Working title:** Mailgraph  
 > **Document:** `agent-spec.md`  
@@ -456,15 +456,15 @@ A protected message must not be included in an action unless the user explicitly
 
 Use a desktop-first layout with these primary sections:
 
-1. **Overview** — mailbox health, key counts, recent insights.
-2. **Graph Explorer** — interactive domain/sender/thread/message graph.
-3. **Messages** — searchable table with filters and previews.
-4. **Senders** — sender/domain directory and activity metrics.
-5. **Timeline** — volume and relationship history.
-6. **Attachments** — attachment search and storage analysis.
-7. **Cleanup Studio** — saved queries, previews, operations, and undo.
-8. **Insights** — explainable suggestions and anomalies.
-9. **Settings** — accounts, privacy, local AI, storage, backups, and protections.
+1. **Overview**: mailbox health, key counts, recent insights.
+2. **Graph Explorer**: interactive domain/sender/thread/message graph.
+3. **Messages**: searchable table with filters and previews.
+4. **Senders**: sender/domain directory and activity metrics.
+5. **Timeline**: volume and relationship history.
+6. **Attachments**: attachment search and storage analysis.
+7. **Cleanup Studio**: saved queries, previews, operations, and undo.
+8. **Insights**: explainable suggestions and anomalies.
+9. **Settings**: accounts, privacy, local AI, storage, backups, and protections.
 
 ## 5.2 Overview dashboard
 
@@ -1213,7 +1213,7 @@ Never use a real mailbox in automated tests.
 
 Do not implement every feature simultaneously.
 
-## Phase 0 — Repository and design foundation
+## Phase 0: Repository and design foundation
 
 Deliverables:
 
@@ -1234,7 +1234,7 @@ Acceptance criteria:
 - Synthetic data can be loaded and cleared.
 - No real credentials are required.
 
-## Phase 1 — Read-only mailbox ingestion
+## Phase 1: Read-only mailbox ingestion
 
 Deliverables:
 
@@ -1254,7 +1254,7 @@ Acceptance criteria:
 - Re-import without duplicate records.
 - Disconnect an account.
 
-## Phase 2 — Search and mailbox overview
+## Phase 2: Search and mailbox overview
 
 Deliverables:
 
@@ -1273,7 +1273,7 @@ Acceptance criteria:
 - Search can be restricted to selected accounts/folders.
 - Large result sets are paginated or virtualized.
 
-## Phase 3 — Graph explorer
+## Phase 3: Graph explorer
 
 Deliverables:
 
@@ -1292,7 +1292,7 @@ Acceptance criteria:
 - Graph does not render every message at once.
 - Graph selection never triggers a mutation.
 
-## Phase 4 — Safe cleanup engine
+## Phase 4: Safe cleanup engine
 
 Deliverables:
 
@@ -1314,7 +1314,7 @@ Acceptance criteria:
 - Undo behavior is provider-aware and tested.
 - No permanent deletion by default.
 
-## Phase 5 — Intelligence and insights
+## Phase 5: Intelligence and insights
 
 Deliverables:
 
@@ -1332,7 +1332,7 @@ Acceptance criteria:
 - Insights link to exact supporting messages.
 - Unavailable metrics are shown as unavailable, not fabricated.
 
-## Phase 6 — Optional local AI
+## Phase 6: Optional local AI
 
 Deliverables:
 
@@ -1351,7 +1351,7 @@ Acceptance criteria:
 - Invalid model output is rejected safely.
 - Email content is treated as untrusted input.
 
-## Phase 7 — Hardening and release
+## Phase 7: Hardening and release
 
 Deliverables:
 
@@ -1560,6 +1560,6 @@ Start by:
 6. Listing any assumptions that need the owner's decision.
 7. Implementing Phase 0 only after the audit and plan are clear.
 
-The first milestone is a working local application shell with a synthetic mailbox dataset—not a half-built email client.
+The first milestone is a working local application shell with a synthetic mailbox dataset, not a half-built email client.
 
 **Guiding rule:** Build a trustworthy mailbox intelligence system first. Add intelligence only where it improves understanding, and add automation only where the user retains control.

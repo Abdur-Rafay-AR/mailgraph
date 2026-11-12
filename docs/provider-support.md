@@ -1,4 +1,4 @@
-# MailGraph — Mail Provider Support & Integration Guide
+# MailGraph: Mail Provider Support & Integration Guide
 
 MailGraph supports offline archives, live mail protocols, and synthetic evaluation datasets.
 
