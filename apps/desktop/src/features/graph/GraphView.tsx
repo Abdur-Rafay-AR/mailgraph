@@ -183,14 +183,14 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'node[node_type = "hub"]',
             style: {
-              shape: 'hexagon',
+              shape: 'ellipse',
               'background-color': '#9333ea',
-              'border-color': '#e9d5ff',
-              'border-width': 3,
+              'border-color': '#f3e8ff',
+              'border-width': 3.5,
               'font-weight': 'bold',
-              'underlay-color': '#a855f7',
+              'underlay-color': '#c084fc',
               'underlay-padding': '10px',
-              'underlay-opacity': 0.35,
+              'underlay-opacity': 0.45,
               'text-border-color': '#9333ea',
               'text-border-width': 1.5,
             },
@@ -198,12 +198,12 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'node[node_type = "domain"]',
             style: {
-              shape: 'round-rectangle',
+              shape: 'ellipse',
               'border-color': 'data(color)',
               'border-width': 2.5,
               'underlay-color': 'data(color)',
-              'underlay-padding': '4px',
-              'underlay-opacity': 0.15,
+              'underlay-padding': '5px',
+              'underlay-opacity': 0.25,
             },
           },
           {

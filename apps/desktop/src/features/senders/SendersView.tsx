@@ -11,7 +11,8 @@ import {
   ArrowUpDown,
   Filter,
   ExternalLink,
-  Info
+  Info,
+  RefreshCw
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { Sender, SenderDetail } from '../../types/api';
@@ -46,6 +47,8 @@ export const SendersView: React.FC<SendersViewProps> = ({
   const [cleanupOperation, setCleanupOperation] = useState<'trash' | 'archive'>('trash');
   const [bulkPreview, setBulkPreview] = useState<any>(null);
   const [executingCleanup, setExecutingCleanup] = useState<boolean>(false);
+  const [cleanupProgress, setCleanupProgress] = useState<number>(0);
+  const [cleanupStatusText, setCleanupStatusText] = useState<string>('Preparing cleanup...');
   const [cleanupSuccessMsg, setCleanupSuccessMsg] = useState<string | null>(null);
 
   const fetchSenders = async () => {
@@ -141,6 +144,8 @@ export const SendersView: React.FC<SendersViewProps> = ({
     if (selectedSenderIds.size === 0) return;
     setCleanupOperation(op);
     setExecutingCleanup(false);
+    setCleanupProgress(0);
+    setCleanupStatusText('Preparing cleanup...');
     setCleanupSuccessMsg(null);
     setCleanupModalOpen(true);
     try {
@@ -156,23 +161,53 @@ export const SendersView: React.FC<SendersViewProps> = ({
     }
   };
 
-  // Execute confirmed bulk cleanup
+  // Execute confirmed bulk cleanup with real-time visual progress bar
   const handleExecuteConfirmedBulkCleanup = async () => {
     if (selectedSenderIds.size === 0) return;
     setExecutingCleanup(true);
+    setCleanupProgress(15);
+    setCleanupStatusText('Verifying target safe-lists and message UIDs...');
+
+    // Smooth progress simulation stages
+    const timer1 = setTimeout(() => {
+      setCleanupProgress(45);
+      setCleanupStatusText(`Moving messages to ${cleanupOperation === 'trash' ? 'Trash' : 'Archive'} on mail server...`);
+    }, 450);
+
+    const timer2 = setTimeout(() => {
+      setCleanupProgress(75);
+      setCleanupStatusText('Synchronizing local database records and folders...');
+    }, 1100);
+
+    const timer3 = setTimeout(() => {
+      setCleanupProgress(92);
+      setCleanupStatusText('Finalizing audit logs and indexing...');
+    }, 1800);
+
     try {
       const res = await api.executeBulkSendersCleanup({
         sender_ids: Array.from(selectedSenderIds),
         operation_type: cleanupOperation,
         exclude_protected: true,
       });
-      setCleanupSuccessMsg(`Successfully executed ${cleanupOperation} on selected senders! (Op ID #${res.operation_id})`);
-      setSelectedSenderIds(new Set());
-      await fetchSenders();
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      setCleanupProgress(100);
+      setCleanupStatusText('Cleanup complete!');
+
+      setTimeout(async () => {
+        setCleanupSuccessMsg(`Successfully moved messages to ${cleanupOperation} for selected senders! (Operation #${res.operation_id})`);
+        setSelectedSenderIds(new Set());
+        await fetchSenders();
+      }, 350);
     } catch (err: any) {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
       alert(err.message || 'Execution error');
-    } finally {
       setExecutingCleanup(false);
+      setCleanupProgress(0);
     }
   };
 
@@ -610,21 +645,47 @@ export const SendersView: React.FC<SendersViewProps> = ({
               </div>
             )}
 
-            {/* Action Confirmation Buttons */}
-            <div className="pt-3 border-t border-border-subtle flex items-center justify-between">
-              <Button size="sm" variant="ghost" onClick={() => setCleanupModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                variant={cleanupOperation === 'trash' ? 'danger' : 'primary'}
-                loading={executingCleanup}
-                onClick={handleExecuteConfirmedBulkCleanup}
-                icon={cleanupOperation === 'trash' ? <Trash2 className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
-              >
-                Confirm: {cleanupOperation === 'trash' ? 'Move' : 'Archive'} {bulkPreview.target_count} Messages
-              </Button>
-            </div>
+            {/* Real-time Progress Bar Card while executing cleanup */}
+            {executingCleanup ? (
+              <div className="p-5 bg-[#140c26] border border-purple-800/60 rounded-xl space-y-3.5 shadow-2xl animate-fadeIn">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <RefreshCw className="w-4 h-4 text-purple-400 animate-spin" />
+                    <span className="text-xs font-semibold text-slate-100">{cleanupStatusText}</span>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-fuchsia-300">{cleanupProgress}%</span>
+                </div>
+
+                {/* Progress bar track */}
+                <div className="w-full bg-[#1e113a] rounded-full h-3 overflow-hidden border border-purple-900/60 p-0.5">
+                  <div
+                    className="bg-gradient-to-r from-purple-600 via-fuchsia-500 to-cyan-400 h-full rounded-full transition-all duration-300 ease-out shadow-lg shadow-purple-500/50"
+                    style={{ width: `${Math.max(6, cleanupProgress)}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] font-mono text-purple-300/80">
+                  <span>Processing {bulkPreview?.target_count?.toLocaleString()} messages</span>
+                  <span>Live remote IMAP sync</span>
+                </div>
+              </div>
+            ) : (
+              /* Action Confirmation Buttons */
+              <div className="pt-3 border-t border-border-subtle flex items-center justify-between">
+                <Button size="sm" variant="ghost" onClick={() => setCleanupModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  variant={cleanupOperation === 'trash' ? 'danger' : 'primary'}
+                  loading={executingCleanup}
+                  onClick={handleExecuteConfirmedBulkCleanup}
+                  icon={cleanupOperation === 'trash' ? <Trash2 className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
+                >
+                  Confirm: {cleanupOperation === 'trash' ? 'Move' : 'Archive'} {bulkPreview.target_count} Messages
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </Modal>

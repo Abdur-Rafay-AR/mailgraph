@@ -49,7 +49,14 @@ def list_senders(
         params.append(category)
         
     where_sql = " AND ".join(where_clauses)
-    active_folder_filter = "(m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))"
+    
+    # Pre-resolve trash/spam folder IDs for constant-time index scans
+    cursor.execute("SELECT id FROM folders WHERE folder_type IN ('trash', 'spam');")
+    trash_ids = [str(r[0]) for r in cursor.fetchall()]
+    if trash_ids:
+        active_folder_filter = f"(m.folder_id IS NULL OR m.folder_id NOT IN ({','.join(trash_ids)}))"
+    else:
+        active_folder_filter = "1=1"
     
     # Total active senders count (only senders with active non-trash messages)
     count_sql = f"""
@@ -61,7 +68,7 @@ def list_senders(
     cursor.execute(count_sql, params)
     total_count = cursor.fetchone()[0]
     
-    # Query aggregated active sender metrics
+    # Query aggregated active sender metrics without expensive correlated subquery
     data_sql = f"""
         SELECT 
             s.id,
@@ -73,16 +80,7 @@ def list_senders(
             s.is_protected,
             COUNT(m.id) as message_count,
             COALESCE(SUM(m.size_bytes), 0) as total_bytes,
-            COALESCE(SUM(CASE WHEN m.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_count,
-            (
-                SELECT c.name FROM message_categories mc2
-                JOIN categories c ON mc2.category_id = c.id
-                JOIN messages m3 ON mc2.message_id = m3.id
-                WHERE m3.sender_id = s.id AND (m3.folder_id IS NULL OR m3.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
-                GROUP BY c.id
-                ORDER BY COUNT(*) DESC
-                LIMIT 1
-            ) as dominant_category
+            COALESCE(SUM(CASE WHEN m.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_count
         FROM senders s
         JOIN messages m ON s.id = m.sender_id AND {active_folder_filter}
         WHERE {where_sql}
@@ -94,6 +92,26 @@ def list_senders(
     data_params = list(params) + [page_size, offset]
     cursor.execute(data_sql, data_params)
     rows = cursor.fetchall()
+    
+    # Fast batch resolution of dominant category for ONLY the paginated rows
+    sender_ids = [r["id"] for r in rows]
+    dominant_categories = {}
+    if sender_ids:
+        cat_placeholders = ",".join("?" for _ in sender_ids)
+        cat_sql = f"""
+            SELECT m.sender_id, c.name, COUNT(*) as cat_cnt
+            FROM messages m
+            JOIN message_categories mc ON m.id = mc.message_id
+            JOIN categories c ON mc.category_id = c.id
+            WHERE m.sender_id IN ({cat_placeholders}) AND {active_folder_filter}
+            GROUP BY m.sender_id, c.id
+            ORDER BY cat_cnt DESC;
+        """
+        cursor.execute(cat_sql, sender_ids)
+        for cat_row in cursor.fetchall():
+            sid = cat_row["sender_id"]
+            if sid not in dominant_categories:
+                dominant_categories[sid] = cat_row["name"]
     
     items = []
     for r in rows:
@@ -108,7 +126,7 @@ def list_senders(
             "message_count": r["message_count"],
             "total_bytes": r["total_bytes"],
             "unread_count": r["unread_count"],
-            "category": r["dominant_category"] or "unknown"
+            "category": dominant_categories.get(r["id"], "unknown")
         })
         
     return {

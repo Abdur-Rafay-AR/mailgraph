@@ -236,11 +236,15 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_address);",
     "CREATE INDEX IF NOT EXISTS idx_messages_received ON messages(received_at);",
     "CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(is_read);",
+    "CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);",
+    "CREATE INDEX IF NOT EXISTS idx_messages_sender_folder ON messages(sender_id, folder_id);",
+    "CREATE INDEX IF NOT EXISTS idx_folders_type ON folders(folder_type);",
     "CREATE INDEX IF NOT EXISTS idx_senders_domain ON senders(domain);",
     "CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);",
     "CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(content_hash);",
     "CREATE INDEX IF NOT EXISTS idx_addr_msg ON message_addresses(message_id);",
-    "CREATE INDEX IF NOT EXISTS idx_msg_cat_msg ON message_categories(message_id);"
+    "CREATE INDEX IF NOT EXISTS idx_msg_cat_msg ON message_categories(message_id);",
+    "CREATE INDEX IF NOT EXISTS idx_msg_cat_composite ON message_categories(message_id, category_id);"
 ]
 
 FTS_TABLES = [

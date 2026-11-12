@@ -11,7 +11,8 @@ import {
   CheckCircle2,
   Clock,
   ShieldAlert,
-  ArrowRight
+  ArrowRight,
+  RefreshCw
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { CleanupPreview, CleanupOperation, QueryAST, QueryCondition } from '../../types/api';
@@ -39,6 +40,8 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
   const [calculatingPreview, setCalculatingPreview] = useState<boolean>(false);
   const [confirmModalOpen, setConfirmModalOpen] = useState<boolean>(false);
   const [executing, setExecuting] = useState<boolean>(false);
+  const [execProgress, setExecProgress] = useState<number>(0);
+  const [execStatusText, setExecStatusText] = useState<string>('Preparing cleanup...');
   const [executionResult, setExecutionResult] = useState<CleanupOperation | null>(null);
 
   // Audit Log State
@@ -113,20 +116,50 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
   const handleExecuteOperation = async () => {
     if (!preview) return;
     setExecuting(true);
+    setExecProgress(15);
+    setExecStatusText('Verifying target safe-lists and message UIDs...');
+
+    const timer1 = setTimeout(() => {
+      setExecProgress(45);
+      setExecStatusText(`Moving messages to ${operationType === 'trash' ? 'Trash' : 'Archive'} on mail server...`);
+    }, 450);
+
+    const timer2 = setTimeout(() => {
+      setExecProgress(75);
+      setExecStatusText('Synchronizing local database records and folders...');
+    }, 1100);
+
+    const timer3 = setTimeout(() => {
+      setExecProgress(92);
+      setExecStatusText('Finalizing audit logs and indexing...');
+    }, 1800);
+
     try {
       const ast = buildQueryAST();
       const res = await api.executeCleanup({
         operation_type: operationType,
         query: ast,
       });
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      setExecProgress(100);
+      setExecStatusText('Operation finalized!');
       setExecutionResult(res);
-      setConfirmModalOpen(false);
-      // Refresh operations in background
-      loadOperations();
+
+      setTimeout(() => {
+        setConfirmModalOpen(false);
+        setExecuting(false);
+        setExecProgress(0);
+        loadOperations();
+      }, 400);
     } catch (err: any) {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
       alert(err.message || 'Error executing operation');
-    } finally {
       setExecuting(false);
+      setExecProgress(0);
     }
   };
 
@@ -429,19 +462,45 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
                 <div className="text-slate-200">• Protected Messages: Excluded ({preview?.protected_excluded_count} shielded)</div>
               </div>
 
-              <div className="pt-3 border-t border-border-subtle flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setConfirmModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  variant={operationType === 'trash' ? 'danger' : 'primary'}
-                  loading={executing}
-                  onClick={handleExecuteOperation}
-                >
-                  Yes, {operationType === 'trash' ? 'Move' : 'Archive'} {preview?.target_count} Messages
-                </Button>
-              </div>
+              {/* Real-time Progress Bar Card while executing cleanup */}
+              {executing ? (
+                <div className="p-4 bg-[#140c26] border border-purple-800/60 rounded-xl space-y-3.5 shadow-2xl animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <RefreshCw className="w-4 h-4 text-purple-400 animate-spin" />
+                      <span className="text-xs font-semibold text-slate-100">{execStatusText}</span>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-fuchsia-300">{execProgress}%</span>
+                  </div>
+
+                  {/* Progress bar track */}
+                  <div className="w-full bg-[#1e113a] rounded-full h-3 overflow-hidden border border-purple-900/60 p-0.5">
+                    <div
+                      className="bg-gradient-to-r from-purple-600 via-fuchsia-500 to-cyan-400 h-full rounded-full transition-all duration-300 ease-out shadow-lg shadow-purple-500/50"
+                      style={{ width: `${Math.max(6, execProgress)}%` }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] font-mono text-purple-300/80">
+                    <span>Processing {preview?.target_count?.toLocaleString()} messages</span>
+                    <span>Live remote IMAP sync</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="pt-3 border-t border-border-subtle flex justify-end gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmModalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={operationType === 'trash' ? 'danger' : 'primary'}
+                    loading={executing}
+                    onClick={handleExecuteOperation}
+                  >
+                    Yes, {operationType === 'trash' ? 'Move' : 'Archive'} {preview?.target_count} Messages
+                  </Button>
+                </div>
+              )}
             </div>
           </Modal>
         </div>

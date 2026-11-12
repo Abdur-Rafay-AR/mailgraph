@@ -206,7 +206,8 @@ def test_senders_cleaned_disappear_from_list_and_overview():
     # 3. Clean up all messages from target sender
     clean_res = client.post("/api/senders/bulk-cleanup-execute", json={
         "sender_ids": [target_sender_id],
-        "operation_type": "trash"
+        "operation_type": "trash",
+        "exclude_protected": False
     })
     assert clean_res.status_code == 200
 
