@@ -43,15 +43,18 @@ def connect_via_app_password():
 
     email_addr = input("Enter your Gmail address (e.g. user@gmail.com): ").strip()
     if not email_addr or "@" not in email_addr:
-        print("Invalid email address.")
+        print("[Error] Invalid email address format.")
         return
 
-    password = getpass.getpass("Enter your 16-character Gmail App Password: ").strip()
+    password = getpass.getpass("Enter your 16-character Gmail App Password (hidden): ").strip()
+    if not password:
+        password = input("No input detected from hidden prompt. Paste your App Password here: ").strip()
+
     # Remove any spaces that Google displays
-    password = password.replace(" ", "")
+    password = password.replace(" ", "").strip()
 
     if not password:
-        print("Password cannot be empty.")
+        print("[Error] Password cannot be empty.")
         return
 
     print("\n-> Testing secure SSL connection to imap.gmail.com:993...")
@@ -59,13 +62,22 @@ def connect_via_app_password():
         client = imaplib.IMAP4_SSL("imap.gmail.com", 993)
         typ, data = client.login(email_addr, password)
         if typ != "OK":
-            print(f"Authentication failed: {data}")
+            print(f"\n[Authentication Failed]: {data}")
             return
         client.logout()
         print("✓ Successfully authenticated with Gmail IMAP!")
+    except imaplib.IMAP4.error as ex:
+        print(f"\n[Authentication Failed]: Google rejected the credentials.")
+        print(f"Details: {ex}")
+        print("\nCommon reasons:")
+        print("  1. You entered your normal Google account password instead of an App Password.")
+        print("  2. 2-Step Verification is not enabled on your Google account.")
+        print("  3. The 16-letter App Password was typed with a typo.")
+        print("\nTo generate a valid 16-letter App Password in 30 seconds:")
+        print("  -> Visit: https://myaccount.google.com/apppasswords")
+        return
     except Exception as ex:
-        print(f"\n[Error] Could not connect to Gmail: {ex}")
-        print("Ensure you generated an 'App Password' at https://myaccount.google.com/apppasswords")
+        print(f"\n[Connection Error]: Could not reach imap.gmail.com:993: {ex}")
         return
 
     # Store credentials securely in local OS Keyring
@@ -240,4 +252,16 @@ def main():
         print("Exiting.")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nOperation cancelled by user.")
+    except Exception as e:
+        print(f"\n[Unexpected Error]: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        try:
+            input("\nPress Enter to return...")
+        except Exception:
+            pass

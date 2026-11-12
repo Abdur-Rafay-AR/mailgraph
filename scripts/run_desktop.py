@@ -42,7 +42,10 @@ def main():
     # 3. Launch Electron window
     print("-> Opening native desktop window...")
     electron_cmd = [npm_cmd, "electron", "."]
-    electron_proc = subprocess.Popen(electron_cmd, cwd=frontend_dir)
+    desktop_env = os.environ.copy()
+    desktop_env["MAILGRAPH_MODE"] = "desktop"
+    desktop_env["NODE_ENV"] = "production"
+    electron_proc = subprocess.Popen(electron_cmd, cwd=frontend_dir, env=desktop_env)
 
     def shutdown(sig, frame):
         print("\nExiting desktop application...")

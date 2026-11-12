@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 
 let mainWindow;
@@ -11,7 +12,7 @@ function createWindow() {
     height: 880,
     minWidth: 1024,
     minHeight: 700,
-    backgroundColor: '#090d16',
+    backgroundColor: '#0c0814',
     title: 'MailGraph',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -21,14 +22,22 @@ function createWindow() {
     }
   });
 
+  const distHtml = path.join(__dirname, '../dist/index.html');
   const devUrl = 'http://localhost:5173';
-  if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
+
+  // In desktop mode or when built bundle exists without dev server url, load file directly
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+  } else if (process.env.MAILGRAPH_MODE === 'desktop' || process.env.NODE_ENV === 'production' || fs.existsSync(distHtml)) {
+    mainWindow.loadFile(distHtml).catch(err => {
+      console.warn('loadFile failed, attempting dev URL fallback:', err);
+      mainWindow.loadURL(devUrl);
+    });
+  } else {
     mainWindow.loadURL(devUrl).catch(() => {
       // Fallback if vite dev server is still starting
       setTimeout(() => mainWindow.loadURL(devUrl), 1500);
     });
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
   mainWindow.on('closed', () => {
