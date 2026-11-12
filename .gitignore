@@ -79,3 +79,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Local runner scripts
+run.cmd
+run.bat
