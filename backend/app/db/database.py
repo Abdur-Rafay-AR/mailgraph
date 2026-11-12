@@ -11,7 +11,17 @@ from backend.app.db.migrations import run_migrations
 class Database:
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or settings.db_path
+        self._memory_conn: Optional[sqlite3.Connection] = None
         self._ensure_dir()
+        if self.db_path == ":memory:":
+            # Keep persistent connection for in-memory database
+            self._memory_conn = sqlite3.connect(
+                "file:mailgraph_mem?mode=memory&cache=shared",
+                uri=True,
+                check_same_thread=False
+            )
+            self._memory_conn.row_factory = sqlite3.Row
+            self._memory_conn.execute("PRAGMA foreign_keys = ON;")
         
     def _ensure_dir(self):
         if self.db_path != ":memory:":
@@ -20,11 +30,19 @@ class Database:
             
     def get_connection(self) -> sqlite3.Connection:
         """Create a configured SQLite connection."""
-        conn = sqlite3.connect(
-            self.db_path,
-            check_same_thread=False,
-            timeout=30.0
-        )
+        if self.db_path == ":memory:":
+            conn = sqlite3.connect(
+                "file:mailgraph_mem?mode=memory&cache=shared",
+                uri=True,
+                check_same_thread=False,
+                timeout=30.0
+            )
+        else:
+            conn = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,
+                timeout=30.0
+            )
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON;")
