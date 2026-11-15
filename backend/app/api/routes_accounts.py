@@ -16,6 +16,8 @@ router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
 @router.get("", response_model=List[AccountResponse])
 def list_accounts(conn: sqlite3.Connection = Depends(get_db)):
+    from backend.app.security.credential_store import reconcile_accounts
+    reconcile_accounts(conn)
     cursor = conn.cursor()
     cursor.execute("""
         SELECT id, provider, display_name, email_address, created_at, last_sync_at, status
@@ -60,10 +62,15 @@ def create_account(req: AccountCreate, conn: sqlite3.Connection = Depends(get_db
 @router.delete("/{account_id}")
 def delete_account(account_id: int, conn: sqlite3.Connection = Depends(get_db)):
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM accounts WHERE id = ?;", (account_id,))
-    if not cursor.fetchone():
+    cursor.execute("SELECT id, email_address FROM accounts WHERE id = ?;", (account_id,))
+    row = cursor.fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail="Account not found")
         
+    email_address = row["email_address"]
+    from backend.app.security.credential_store import CredentialStore
+    CredentialStore().delete_credentials(email_address)
+
     cursor.execute("DELETE FROM accounts WHERE id = ?;", (account_id,))
     # Clean up orphan senders with no remaining messages
     cursor.execute("""

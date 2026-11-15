@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     data_dir: Path = get_default_data_dir()
     db_path: str = str(get_default_data_dir() / "mailgraph.db")
+    credential_service_name: str = "MailGraph"
     host: str = "127.0.0.1"
     port: int = 28491
     

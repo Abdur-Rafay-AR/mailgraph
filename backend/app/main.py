@@ -23,6 +23,9 @@ async def lifespan(app: FastAPI):
     # Initialize database and run migrations on startup
     db = get_database()
     db.initialize()
+    with db.connect() as conn:
+        from backend.app.security.credential_store import reconcile_accounts
+        reconcile_accounts(conn)
     yield
 
 app = FastAPI(
