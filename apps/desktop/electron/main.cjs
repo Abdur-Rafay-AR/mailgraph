@@ -22,6 +22,24 @@ function createWindow() {
     }
   });
 
+  // Security: deny new-window creation and open external links in default OS browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  // Security: prevent in-app navigation away from application UI
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== mainWindow.webContents.getURL()) {
+      event.preventDefault();
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+    }
+  });
+
   const distHtml = path.join(__dirname, '../dist/index.html');
   const devUrl = 'http://localhost:5173';
 

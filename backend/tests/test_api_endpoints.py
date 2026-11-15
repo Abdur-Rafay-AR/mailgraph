@@ -216,3 +216,20 @@ def test_senders_cleaned_disappear_from_list_and_overview():
     refreshed_ids = [s["id"] for s in refreshed_senders]
     assert target_sender_id not in refreshed_ids
 
+def test_cors_security_origin_restriction():
+    """Verify that localhost and null origins are allowed, while external origins are blocked."""
+    # 1. Allowed localhost origin (Vite dev server)
+    res_local = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert res_local.status_code == 200
+    assert res_local.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    # 2. Allowed null origin (Electron local file bundle)
+    res_null = client.get("/api/health", headers={"Origin": "null"})
+    assert res_null.status_code == 200
+    assert res_null.headers.get("access-control-allow-origin") == "null"
+
+    # 3. Blocked external / malicious origin
+    res_external = client.get("/api/health", headers={"Origin": "https://malicious-website.com"})
+    assert res_external.status_code == 200
+    assert res_external.headers.get("access-control-allow-origin") is None
+
