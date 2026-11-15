@@ -182,3 +182,71 @@ def connect_imap(req: ImapConnectRequest, initial_scan_limit: Optional[int] = 10
         "email_address": req.email_address,
         "inserted_count": inserted
     }
+
+@router.post("/{account_id}/sync")
+def sync_account(account_id: int, limit: Optional[int] = 100):
+    """
+    Sync new emails for an existing account using stored credentials from OS Keyring.
+    Eliminates needing to re-enter email & password.
+    """
+    db = get_database()
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, provider, display_name, email_address, settings_json FROM accounts WHERE id = ?;", (account_id,))
+        acc = cursor.fetchone()
+        if not acc:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        provider_name = acc[1]
+        email_address = acc[3]
+
+    pipeline = IngestionPipeline(db)
+
+    if provider_name == "synthetic":
+        generator = SyntheticMailboxGenerator()
+        res = pipeline.ingest_messages(account_id, generator.generate(count=limit or 25))
+    elif provider_name in ("imap", "gmail"):
+        from backend.app.security.credential_store import CredentialStore
+        cred_store = CredentialStore()
+        secret = cred_store.get_credentials(email_address)
+        if not secret:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No stored credentials found in OS Keyring for {email_address}. Please reconnect your account."
+            )
+        try:
+            creds = json.loads(secret)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid credential payload stored in OS Keyring.")
+
+        if creds.get("provider") == "imap" or "password" in creds:
+            provider = ImapProvider(
+                host=creds.get("host", "imap.gmail.com"),
+                username=creds.get("username", email_address),
+                password=creds["password"],
+                port=creds.get("port", 993),
+                use_ssl=creds.get("use_ssl", True)
+            )
+            provider.connect()
+            res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=limit))
+        elif creds.get("provider") == "gmail" or "access_token" in creds:
+            from backend.app.providers.gmail import GmailProvider
+            provider = GmailProvider(token_dict=creds)
+            provider.connect()
+            res = pipeline.ingest_messages(account_id, provider.stream_messages(limit=limit))
+        else:
+            raise HTTPException(status_code=400, detail="Unrecognized credential structure in OS Keyring.")
+    else:
+        raise HTTPException(status_code=400, detail=f"Sync not supported for provider '{provider_name}'.")
+
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE accounts SET last_sync_at = datetime('now'), status = 'active' WHERE id = ?;", (account_id,))
+
+    return {
+        "status": "success",
+        "account_id": account_id,
+        "scanned_count": res.scanned_count,
+        "inserted_count": res.inserted_count,
+        "skipped_count": res.skipped_count,
+        "failed_count": res.failed_count
+    }

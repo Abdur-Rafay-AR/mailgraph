@@ -647,26 +647,26 @@ export const SendersView: React.FC<SendersViewProps> = ({
 
             {/* Real-time Progress Bar Card while executing cleanup */}
             {executingCleanup ? (
-              <div className="p-5 bg-[#140c26] border border-purple-800/60 rounded-xl space-y-3.5 shadow-2xl animate-fadeIn">
+              <div className="p-5 bg-bg-surface border border-border-muted rounded-none space-y-3.5 shadow-xl animate-fadeIn font-mono">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <RefreshCw className="w-4 h-4 text-purple-400 animate-spin" />
-                    <span className="text-xs font-semibold text-slate-100">{cleanupStatusText}</span>
+                    <RefreshCw className="w-4 h-4 text-brand animate-spin" />
+                    <span className="text-xs font-bold text-white uppercase">{cleanupStatusText}</span>
                   </div>
-                  <span className="text-xs font-mono font-bold text-fuchsia-300">{cleanupProgress}%</span>
+                  <span className="text-xs font-mono font-bold text-brand">{cleanupProgress}%</span>
                 </div>
 
                 {/* Progress bar track */}
-                <div className="w-full bg-[#1e113a] rounded-full h-3 overflow-hidden border border-purple-900/60 p-0.5">
+                <div className="w-full bg-bg-deep rounded-none h-3 overflow-hidden border border-border-muted p-0.5">
                   <div
-                    className="bg-gradient-to-r from-purple-600 via-fuchsia-500 to-cyan-400 h-full rounded-full transition-all duration-300 ease-out shadow-lg shadow-purple-500/50"
+                    className="bg-brand h-full rounded-none transition-all duration-300 ease-out"
                     style={{ width: `${Math.max(6, cleanupProgress)}%` }}
                   />
                 </div>
 
-                <div className="flex items-center justify-between text-[11px] font-mono text-purple-300/80">
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
                   <span>Processing {bulkPreview?.target_count?.toLocaleString()} messages</span>
-                  <span>Live remote IMAP sync</span>
+                  <span>Live remote mailbox sync</span>
                 </div>
               </div>
             ) : (

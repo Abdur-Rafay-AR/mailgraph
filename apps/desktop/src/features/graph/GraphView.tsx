@@ -168,14 +168,14 @@ export const GraphView: React.FC<GraphViewProps> = ({
                 const count = ele.data('message_count') || 1;
                 return `${Math.min(74, Math.max(22, Math.log2(count + 1) * 8.2))}px`;
               },
-              // Frosted HUD label styling
-              'text-background-color': '#0c0814',
-              'text-background-opacity': 0.88,
+              // Technical HUD label styling
+              'text-background-color': '#0A0A0A',
+              'text-background-opacity': 0.92,
               'text-background-padding': '3px',
-              'text-background-shape': 'roundrectangle',
-              'text-border-color': '#3b2066',
+              'text-background-shape': 'rectangle',
+              'text-border-color': '#282828',
               'text-border-width': 1,
-              'text-border-opacity': 0.85,
+              'text-border-opacity': 0.9,
               'transition-property': 'background-color, border-color, width, height, opacity, underlay-opacity',
               'transition-duration': 0.2,
             },
@@ -184,15 +184,15 @@ export const GraphView: React.FC<GraphViewProps> = ({
             selector: 'node[node_type = "hub"]',
             style: {
               shape: 'ellipse',
-              'background-color': '#9333ea',
-              'border-color': '#f3e8ff',
-              'border-width': 3.5,
+              'background-color': '#FF3B30',
+              'border-color': '#ffffff',
+              'border-width': 3,
               'font-weight': 'bold',
-              'underlay-color': '#c084fc',
-              'underlay-padding': '10px',
-              'underlay-opacity': 0.45,
-              'text-border-color': '#9333ea',
-              'text-border-width': 1.5,
+              'underlay-color': '#FF3B30',
+              'underlay-padding': '8px',
+              'underlay-opacity': 0.35,
+              'text-border-color': '#FF3B30',
+              'text-border-width': 1,
             },
           },
           {
@@ -217,11 +217,11 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'node:selected',
             style: {
-              'border-color': '#f472b6',
-              'border-width': 4,
-              'underlay-color': '#c084fc',
+              'border-color': '#FF3B30',
+              'border-width': 3.5,
+              'underlay-color': '#FF3B30',
               'underlay-padding': '8px',
-              'underlay-opacity': 0.55,
+              'underlay-opacity': 0.45,
             },
           },
           {
@@ -231,9 +231,9 @@ export const GraphView: React.FC<GraphViewProps> = ({
                 const w = ele.data('weight') || 1;
                 return `${Math.min(4.5, Math.max(1.2, Math.log2(w + 1)))}px`;
               },
-              'line-color': '#6b21a8',
+              'line-color': '#2A2A2E',
               'curve-style': 'bezier',
-              opacity: 0.45,
+              opacity: 0.6,
               'transition-property': 'line-color, width, opacity',
               'transition-duration': 0.2,
             },
@@ -241,7 +241,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'edge:selected',
             style: {
-              'line-color': '#e879f9',
+              'line-color': '#FF3B30',
               width: 3.5,
               opacity: 1,
             },
@@ -264,8 +264,8 @@ export const GraphView: React.FC<GraphViewProps> = ({
             selector: 'node.spotlight',
             style: {
               'border-width': 3,
-              'border-color': '#f472b6',
-              'underlay-color': '#a855f7',
+              'border-color': '#FF3B30',
+              'underlay-color': '#FF3B30',
               'underlay-padding': '6px',
               'underlay-opacity': 0.35,
             },
@@ -273,17 +273,17 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'node.node-hovered',
             style: {
-              'border-width': 3.5,
+              'border-width': 3,
               'border-color': '#ffffff',
-              'underlay-color': '#c084fc',
-              'underlay-padding': '10px',
-              'underlay-opacity': 0.6,
+              'underlay-color': '#FF3B30',
+              'underlay-padding': '8px',
+              'underlay-opacity': 0.5,
             },
           },
           {
             selector: 'edge.spotlight',
             style: {
-              'line-color': '#e879f9',
+              'line-color': '#FF3B30',
               opacity: 0.95,
               width: (ele: any) => {
                 const w = ele.data('weight') || 1;
@@ -398,20 +398,20 @@ export const GraphView: React.FC<GraphViewProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#0c0814] overflow-hidden relative select-none">
+    <div className="flex-1 flex flex-col h-full bg-bg-deep overflow-hidden relative select-none">
       {/* Top Filter and Level Switcher Bar */}
-      <div className="p-3 bg-[#120b22]/95 border-b border-purple-900/40 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 z-10 shadow-lg">
+      <div className="p-3 bg-bg-surface border-b border-border-subtle flex flex-wrap items-center justify-between gap-3 z-10 shadow-sm">
         <div className="flex items-center gap-2.5 flex-wrap">
           {/* Level Switcher */}
-          <div className="flex items-center bg-[#1a0f30] p-0.5 rounded-lg border border-purple-800/40 text-xs shadow-inner">
+          <div className="flex items-center bg-bg-deep p-0.5 rounded-none border border-border-muted text-xs">
             <button
               onClick={() => {
                 setSelectedDomain('');
                 setLevel('domain');
               }}
-              className={`px-3 py-1.5 rounded-md font-medium transition-all ${
+              className={`px-3 py-1.5 rounded-none font-mono text-xs transition-all ${
                 level === 'domain'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-950 font-semibold'
+                  ? 'bg-brand text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -419,9 +419,9 @@ export const GraphView: React.FC<GraphViewProps> = ({
             </button>
             <button
               onClick={() => setLevel('sender')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-all ${
+              className={`px-3 py-1.5 rounded-none font-mono text-xs transition-all ${
                 level === 'sender'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-950 font-semibold'
+                  ? 'bg-brand text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -430,7 +430,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
           </div>
 
           {selectedDomain && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-900/30 border border-purple-500/40 text-purple-300 text-xs font-mono">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-none bg-bg-elevated border border-brand text-brand-light text-xs font-mono">
               Filtered Domain: {selectedDomain}
               <button
                 onClick={() => {
@@ -447,13 +447,13 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
           {/* Quick Node Search */}
           <div className="relative flex items-center">
-            <Search className="w-3.5 h-3.5 text-purple-400 absolute left-2.5 pointer-events-none" />
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => handleSearchChange(e.target.value)}
               placeholder="Find node or domain..."
-              className="bg-[#1a0f30] border border-purple-800/40 rounded-lg pl-8 pr-7 py-1 text-xs text-slate-200 placeholder-purple-400/60 focus:outline-none focus:border-purple-500 transition-colors w-44 font-mono"
+              className="bg-bg-deep border border-border-muted rounded-none pl-8 pr-7 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand transition-colors w-44 font-mono"
             />
             {searchQuery && (
               <button
@@ -469,81 +469,81 @@ export const GraphView: React.FC<GraphViewProps> = ({
         {/* Topology & Physics Layout Modes */}
         <div className="flex items-center gap-2 flex-wrap">
           {/* Topology Switcher */}
-          <div className="flex items-center bg-[#1a0f30] p-0.5 rounded-lg border border-purple-800/40 text-xs shadow-inner">
+          <div className="flex items-center bg-bg-deep p-0.5 rounded-none border border-border-muted text-xs">
             <button
               onClick={() => handleApplyLayout('galaxy')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-none font-mono text-xs transition-all ${
                 layoutMode === 'galaxy'
-                  ? 'bg-purple-600 text-white shadow-sm font-semibold'
+                  ? 'bg-brand text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Force-directed spring physics layout"
             >
-              <Sparkles className="w-3.5 h-3.5 text-fuchsia-300" />
+              <Sparkles className="w-3.5 h-3.5" />
               <span>Galaxy</span>
             </button>
             <button
               onClick={() => handleApplyLayout('hierarchy')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-none font-mono text-xs transition-all ${
                 layoutMode === 'hierarchy'
-                  ? 'bg-purple-600 text-white shadow-sm font-semibold'
+                  ? 'bg-brand text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Hierarchical tree branches radiating from root hub"
             >
-              <GitFork className="w-3.5 h-3.5 text-cyan-300" />
+              <GitFork className="w-3.5 h-3.5" />
               <span>Tree</span>
             </button>
             <button
               onClick={() => handleApplyLayout('radial')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-none font-mono text-xs transition-all ${
                 layoutMode === 'radial'
-                  ? 'bg-purple-600 text-white shadow-sm font-semibold'
+                  ? 'bg-brand text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Multi-tier concentric planetary orbits"
             >
-              <CircleDot className="w-3.5 h-3.5 text-amber-300" />
+              <CircleDot className="w-3.5 h-3.5" />
               <span>Radial</span>
             </button>
             <button
               onClick={() => handleApplyLayout('matrix')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-none font-mono text-xs transition-all ${
                 layoutMode === 'matrix'
-                  ? 'bg-purple-600 text-white shadow-sm font-semibold'
+                  ? 'bg-brand text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Ordered technical matrix grid"
             >
-              <LayoutGrid className="w-3.5 h-3.5 text-emerald-300" />
+              <LayoutGrid className="w-3.5 h-3.5" />
               <span>Matrix</span>
             </button>
           </div>
 
           {/* Sizing Metric Toggle */}
-          <div className="flex items-center bg-[#1a0f30] p-0.5 rounded-lg border border-purple-800/40 text-xs">
+          <div className="flex items-center bg-bg-deep p-0.5 rounded-none border border-border-muted text-xs">
             <button
               onClick={() => setSizeMetric('count')}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all ${
+              className={`flex items-center gap-1 px-2 py-1 rounded-none font-mono text-xs transition-all ${
                 sizeMetric === 'count'
-                  ? 'bg-purple-800/80 text-white font-medium'
+                  ? 'bg-bg-elevated text-white font-bold border border-border-muted'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Size nodes by email volume"
             >
-              <Hash className="w-3 h-3 text-purple-300" />
+              <Hash className="w-3 h-3 text-slate-400" />
               <span>Count</span>
             </button>
             <button
               onClick={() => setSizeMetric('size')}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all ${
+              className={`flex items-center gap-1 px-2 py-1 rounded-none font-mono text-xs transition-all ${
                 sizeMetric === 'size'
-                  ? 'bg-purple-800/80 text-white font-medium'
+                  ? 'bg-bg-elevated text-white font-bold border border-border-muted'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Size nodes by total disk storage"
             >
-              <HardDrive className="w-3 h-3 text-cyan-300" />
+              <HardDrive className="w-3 h-3 text-slate-400" />
               <span>Storage</span>
             </button>
           </div>
@@ -552,7 +552,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="bg-[#1a0f30] border border-purple-800/40 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-purple-500 font-mono"
+            className="bg-bg-deep border border-border-muted rounded-none px-2.5 py-1 text-xs text-white focus:outline-none focus:border-brand font-mono"
           >
             <option value="">All Categories</option>
             <option value="important">Important</option>
@@ -570,7 +570,6 @@ export const GraphView: React.FC<GraphViewProps> = ({
             variant="outline"
             onClick={handleResetLayout}
             title="Re-run physics simulation"
-            className="border-purple-800/50 hover:bg-purple-900/30 text-purple-200"
           >
             <RefreshCw className="w-3 h-3 mr-1" />
             Re-simulate
@@ -581,50 +580,50 @@ export const GraphView: React.FC<GraphViewProps> = ({
       {/* Main Canvas Area */}
       <div className="flex-1 relative w-full h-full">
         {loading && (
-          <div className="absolute inset-0 bg-[#0c0814]/75 backdrop-blur-sm flex flex-col items-center justify-center z-20 text-xs font-mono text-purple-200 gap-2">
-            <RefreshCw className="w-6 h-6 animate-spin text-purple-400" />
+          <div className="absolute inset-0 bg-bg-deep/80 backdrop-blur-sm flex flex-col items-center justify-center z-20 text-xs font-mono text-slate-300 gap-2">
+            <RefreshCw className="w-6 h-6 animate-spin text-brand" />
             <span>Simulating network physics and orbital clusters...</span>
           </div>
         )}
 
-        {/* Cosmic Starfield Grid Canvas */}
+        {/* Technical Grid Canvas */}
         <div
           ref={containerRef}
-          className="w-full h-full bg-[#0c0814] bg-[radial-gradient(#3b185f_1px,transparent_1px)] [background-size:28px_28px]"
+          className="w-full h-full bg-[#0A0A0A] bg-[radial-gradient(#262626_1px,transparent_1px)] [background-size:24px_24px]"
         />
 
         {/* Top-Left Telemetry Badges */}
         <div className="absolute top-3 left-4 flex items-center gap-2 pointer-events-none z-10">
-          <span className="px-2.5 py-0.5 rounded-full bg-[#170e2c]/90 border border-purple-800/50 text-[10px] font-mono text-purple-300 backdrop-blur-md shadow-md">
+          <span className="px-2.5 py-0.5 rounded-none bg-bg-surface/90 border border-border-muted text-[10px] font-mono text-slate-300 shadow-sm">
             {nodeCount} Nodes
           </span>
-          <span className="px-2.5 py-0.5 rounded-full bg-[#170e2c]/90 border border-purple-800/50 text-[10px] font-mono text-purple-300 backdrop-blur-md shadow-md">
+          <span className="px-2.5 py-0.5 rounded-none bg-bg-surface/90 border border-border-muted text-[10px] font-mono text-slate-300 shadow-sm">
             {edgeCount} Relations
           </span>
-          <span className="px-2.5 py-0.5 rounded-full bg-[#170e2c]/90 border border-purple-800/50 text-[10px] font-mono text-fuchsia-300 backdrop-blur-md shadow-md uppercase">
+          <span className="px-2.5 py-0.5 rounded-none bg-bg-surface/90 border border-border-muted text-[10px] font-mono text-brand font-bold shadow-sm uppercase">
             Layout: {layoutMode}
           </span>
         </div>
 
         {/* Floating Zoom & Fit Controls */}
-        <div className="absolute bottom-5 left-5 flex flex-col gap-1.5 bg-[#170e2c]/90 border border-purple-800/50 rounded-lg p-1.5 shadow-2xl z-20 backdrop-blur-md">
+        <div className="absolute bottom-5 left-5 flex flex-col gap-1.5 bg-bg-surface border border-border-muted rounded-none p-1.5 shadow-xl z-20">
           <button
             onClick={handleZoomIn}
-            className="p-1.5 hover:bg-purple-900/40 text-purple-200 rounded transition-colors"
+            className="p-1.5 hover:bg-bg-elevated text-slate-300 hover:text-white rounded-none transition-colors"
             title="Zoom In"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
           <button
             onClick={handleZoomOut}
-            className="p-1.5 hover:bg-purple-900/40 text-purple-200 rounded transition-colors"
+            className="p-1.5 hover:bg-bg-elevated text-slate-300 hover:text-white rounded-none transition-colors"
             title="Zoom Out"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
           <button
             onClick={handleFit}
-            className="p-1.5 hover:bg-purple-900/40 text-purple-200 rounded transition-colors"
+            className="p-1.5 hover:bg-bg-elevated text-slate-300 hover:text-white rounded-none transition-colors"
             title="Fit to Screen"
           >
             <Maximize2 className="w-4 h-4" />
@@ -633,33 +632,33 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
         {/* Node Detail Side Panel */}
         {selectedNode && (
-          <div className="absolute top-4 right-4 w-84 bg-[#140c26]/95 border border-purple-700/50 shadow-2xl rounded-xl p-4 space-y-3 z-20 backdrop-blur-lg animate-fadeIn text-xs text-slate-200">
-            <div className="flex items-start justify-between border-b border-purple-800/40 pb-2.5">
+          <div className="absolute top-4 right-4 w-84 bg-bg-surface border border-border-muted shadow-2xl rounded-none p-4 space-y-3 z-20 animate-fadeIn text-xs text-slate-200 font-mono">
+            <div className="flex items-start justify-between border-b border-border-subtle pb-2.5">
               <div>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-purple-400 font-semibold">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-brand font-bold">
                   {selectedNode.node_type} Entity
                 </span>
-                <h4 className="text-sm font-semibold text-white truncate max-w-[210px]">
+                <h4 className="text-sm font-bold text-white truncate max-w-[210px] font-sans">
                   {selectedNode.label}
                 </h4>
               </div>
               <button
                 onClick={() => setSelectedNode(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-md transition-colors"
+                className="text-slate-400 hover:text-white p-1 rounded-none transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-              <div className="p-2.5 bg-[#1e113a] rounded-lg border border-purple-800/40 shadow-inner">
-                <div className="text-purple-300 text-[10px]">Email Volume</div>
+              <div className="p-2.5 bg-bg-deep rounded-none border border-border-subtle">
+                <div className="text-slate-400 text-[10px] uppercase">Email Volume</div>
                 <div className="text-sm font-bold text-white mt-0.5">
                   {selectedNode.message_count?.toLocaleString() || 0}
                 </div>
               </div>
-              <div className="p-2.5 bg-[#1e113a] rounded-lg border border-purple-800/40 shadow-inner">
-                <div className="text-purple-300 text-[10px]">Storage Footprint</div>
+              <div className="p-2.5 bg-bg-deep rounded-none border border-border-subtle">
+                <div className="text-slate-400 text-[10px] uppercase">Storage</div>
                 <div className="text-sm font-bold text-white mt-0.5">
                   {selectedNode.total_bytes
                     ? `${(selectedNode.total_bytes / (1024 * 1024)).toFixed(2)} MB`
@@ -670,32 +669,32 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
             {selectedNode.unread_count !== undefined && (
               <div className="flex items-center justify-between text-slate-300 font-mono text-[11px] px-1">
-                <span className="text-purple-300">Unread Messages:</span>
-                <span className="text-amber-400 font-bold">{selectedNode.unread_count}</span>
+                <span className="text-slate-400">Unread Messages:</span>
+                <span className="text-brand font-bold">{selectedNode.unread_count}</span>
               </div>
             )}
 
             {selectedNode.sender_count !== undefined && (
               <div className="flex items-center justify-between text-slate-300 font-mono text-[11px] px-1">
-                <span className="text-purple-300">Active Senders:</span>
-                <span className="text-cyan-400 font-bold">{selectedNode.sender_count}</span>
+                <span className="text-slate-400">Active Senders:</span>
+                <span className="text-white font-bold">{selectedNode.sender_count}</span>
               </div>
             )}
 
             {selectedNode.category && (
               <div className="flex items-center justify-between text-slate-300 font-mono text-[11px] px-1">
-                <span className="text-purple-300">Category:</span>
+                <span className="text-slate-400">Category:</span>
                 <Badge label={selectedNode.category} color={selectedNode.color} />
               </div>
             )}
 
             {/* Quick Drilldown Buttons */}
-            <div className="pt-2 border-t border-purple-800/40 space-y-2">
+            <div className="pt-2 border-t border-border-subtle space-y-2">
               {selectedNode.node_type === 'domain' && (
                 <Button
                   size="xs"
                   variant="primary"
-                  className="w-full bg-purple-600 hover:bg-purple-500 shadow-md shadow-purple-950 font-semibold"
+                  className="w-full"
                   onClick={() => {
                     setSelectedDomain(selectedNode.domain || selectedNode.label);
                     setLevel('sender');
@@ -709,7 +708,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
               <Button
                 size="xs"
                 variant="outline"
-                className="w-full border-purple-800/50 hover:bg-purple-900/30 text-purple-200"
+                className="w-full"
                 onClick={() => {
                   if (onNavigateToMessages) {
                     onNavigateToMessages(

@@ -22,16 +22,16 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="h-14 bg-bg-surface border-b border-border-subtle px-6 flex items-center justify-between shrink-0 select-none">
       <div>
-        <h1 className="text-sm font-semibold text-slate-100 tracking-tight flex items-center gap-2">
+        <h1 className="text-sm font-bold text-white tracking-wider uppercase font-sans flex items-center gap-2">
           {title}
           <span
-            className={`w-2 h-2 rounded-full inline-block ${
-              backendOnline ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'
+            className={`w-2 h-2 rounded-none inline-block ${
+              backendOnline ? 'bg-emerald-400' : 'bg-brand animate-pulse'
             }`}
             title={backendOnline ? 'Backend service online' : 'Backend offline'}
           />
         </h1>
-        {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
+        {subtitle && <p className="text-xs text-slate-400 font-mono mt-0.5">{subtitle}</p>}
       </div>
 
       <div className="flex items-center gap-2.5">

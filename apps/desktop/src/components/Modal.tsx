@@ -52,19 +52,19 @@ export const Modal: React.FC<ModalProps> = ({
       {/* Modal Dialog Box */}
       <div
         className={clsx(
-          'relative w-full bg-bg-surface border border-border-muted shadow-2xl rounded-lg overflow-hidden flex flex-col max-h-[90vh] z-10',
+          'relative w-full bg-bg-surface border border-border-muted shadow-2xl rounded-none overflow-hidden flex flex-col max-h-[90vh] z-10',
           widths[maxWidth]
         )}
       >
         {/* Header */}
         <div className="flex items-start justify-between px-5 py-4 border-b border-border-subtle bg-bg-surface">
           <div>
-            <h3 className="text-base font-semibold text-slate-100 tracking-tight">{title}</h3>
-            {subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
+            <h3 className="text-base font-bold text-white tracking-tight uppercase font-sans">{title}</h3>
+            {subtitle && <p className="text-xs text-slate-400 font-mono mt-0.5">{subtitle}</p>}
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 p-1 rounded hover:bg-bg-elevated transition-colors"
+            className="text-slate-400 hover:text-white p-1 rounded-none hover:bg-bg-elevated transition-colors"
           >
             <X className="w-4 h-4" />
           </button>

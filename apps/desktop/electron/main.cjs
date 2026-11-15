@@ -12,7 +12,7 @@ function createWindow() {
     height: 880,
     minWidth: 1024,
     minHeight: 700,
-    backgroundColor: '#0c0814',
+    backgroundColor: '#0A0A0A',
     title: 'MailGraph',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

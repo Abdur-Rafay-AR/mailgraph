@@ -53,17 +53,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <aside className="w-56 bg-bg-surface border-r border-border-subtle flex flex-col justify-between shrink-0 h-full select-none">
       {/* Brand & App Title */}
       <div>
-        <div className="px-4 py-4 border-b border-border-subtle flex items-center justify-between">
+        <div className="px-4 py-4 border-b border-border-subtle flex items-center justify-between bg-bg-surface">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded bg-brand/20 border border-brand/40 flex items-center justify-center text-brand-light">
+            <div className="w-7 h-7 rounded-none bg-brand flex items-center justify-center text-white shadow-sm">
               <GitFork className="w-4 h-4" />
             </div>
             <div>
-              <div className="text-sm font-semibold tracking-tight text-slate-100">MailGraph</div>
+              <div className="text-sm font-bold tracking-tight text-white uppercase font-sans">MailGraph</div>
               <div className="text-[10px] text-slate-500 font-mono tracking-widest uppercase">Local-First</div>
             </div>
           </div>
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-bg-elevated border border-border-muted text-slate-400">
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-none bg-bg-elevated border border-border-muted text-slate-400">
             v0.1
           </span>
         </div>
@@ -78,14 +78,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={item.id}
                 onClick={() => onSelectView(item.id)}
                 className={clsx(
-                  'w-full flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors text-left',
+                  'w-full flex items-center gap-2.5 px-3 py-2 rounded-none text-xs font-mono transition-colors text-left',
                   isActive
-                    ? 'bg-brand/15 text-brand-light border border-brand/30 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-bg-elevated border border-transparent'
+                    ? 'bg-bg-elevated text-white border-l-2 border-brand font-semibold shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-bg-elevated border-l-2 border-transparent'
                 )}
               >
-                <Icon className={clsx('w-4 h-4 shrink-0', isActive ? 'text-brand-light' : 'text-slate-400')} />
-                <span>{item.label}</span>
+                <Icon className={clsx('w-4 h-4 shrink-0', isActive ? 'text-brand' : 'text-slate-500')} />
+                <span className="tracking-tight">{item.label}</span>
               </button>
             );
           })}

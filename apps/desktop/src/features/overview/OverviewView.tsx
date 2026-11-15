@@ -127,10 +127,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
 
         {/* Senders & Organizations */}
-        <div className="p-4 bg-bg-surface rounded-lg border border-border-subtle shadow-sm">
+        <div className="p-4 bg-bg-surface rounded-none border border-border-subtle shadow-sm">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>SENDERS & DOMAINS</span>
-            <Users className="w-4 h-4 text-purple-400" />
+            <Users className="w-4 h-4 text-brand" />
           </div>
           <div className="text-2xl font-bold font-mono text-slate-100">
             {stats ? stats.total_senders : 0}
@@ -223,12 +223,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                       <span className="capitalize text-slate-300">{cat.name.replace('_', ' ')}</span>
                       <span className="text-slate-400">{cat.count} ({pct}%)</span>
                     </div>
-                    <div className="w-full h-1.5 bg-bg-deep rounded-full overflow-hidden">
+                    <div className="w-full h-1.5 bg-bg-deep rounded-none overflow-hidden">
                       <div
-                        className="h-full rounded-full transition-all duration-300"
+                        className="h-full rounded-none transition-all duration-300"
                         style={{
                           width: `${pct}%`,
-                          backgroundColor: cat.color || '#9061f9',
+                          backgroundColor: cat.color || '#FF3B30',
                         }}
                       />
                     </div>
@@ -248,7 +248,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
         <div
           onClick={() => onNavigate('graph')}
-          className="p-4 rounded-lg bg-bg-surface border border-border-subtle hover:border-brand/60 cursor-pointer transition-all shadow-sm space-y-1.5 group"
+          className="p-4 rounded-none bg-bg-surface border border-border-subtle hover:border-brand cursor-pointer transition-all shadow-sm space-y-1.5 group"
         >
           <div className="flex items-center justify-between">
             <span className="font-semibold text-sm text-slate-100 group-hover:text-brand-light transition-colors">
@@ -263,13 +263,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
         <div
           onClick={() => onNavigate('senders')}
-          className="p-4 rounded-lg bg-bg-surface border border-border-subtle hover:border-brand/60 cursor-pointer transition-all shadow-sm space-y-1.5 group"
+          className="p-4 rounded-none bg-bg-surface border border-border-subtle hover:border-brand cursor-pointer transition-all shadow-sm space-y-1.5 group"
         >
           <div className="flex items-center justify-between">
             <span className="font-semibold text-sm text-slate-100 group-hover:text-brand-light transition-colors">
               Dedicated Sender Management
             </span>
-            <Users className="w-4 h-4 text-purple-400" />
+            <Users className="w-4 h-4 text-brand" />
           </div>
           <p className="text-xs text-slate-400 leading-relaxed">
             Sort senders by message volume and storage contribution, select candidates, and preview bulk cleanup.

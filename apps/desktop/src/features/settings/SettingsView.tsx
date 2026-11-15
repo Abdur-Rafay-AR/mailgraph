@@ -38,6 +38,7 @@ export const SettingsView: React.FC = () => {
   const [imapHost, setImapHost] = useState<string>('imap.gmail.com');
   const [imapPort, setImapPort] = useState<number>(993);
   const [imapScanLimit, setImapScanLimit] = useState<number>(100);
+  const [syncingAccountId, setSyncingAccountId] = useState<number | null>(null);
 
   // Settings state
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -151,6 +152,19 @@ export const SettingsView: React.FC = () => {
       alert(err.message || 'Failed to initialize account');
     } finally {
       setLoadingCreate(false);
+    }
+  };
+
+  const handleSyncAccount = async (id: number) => {
+    setSyncingAccountId(id);
+    try {
+      const res = await api.syncAccount(id);
+      alert(`Sync completed! Scanned ${res.scanned_count} messages, indexed ${res.inserted_count} new messages (${res.skipped_count} existing duplicates skipped).`);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || 'Sync failed.');
+    } finally {
+      setSyncingAccountId(null);
     }
   };
 
@@ -273,7 +287,7 @@ export const SettingsView: React.FC = () => {
             </Button>
           </div>
 
-          <div className="border border-border-subtle rounded divide-y divide-border-subtle bg-bg-surface text-xs font-mono">
+          <div className="border border-border-subtle rounded-none divide-y divide-border-subtle bg-bg-surface text-xs font-mono">
             {accounts.length === 0 ? (
               <div className="py-8 text-center text-slate-500 font-sans">
                 No accounts connected yet. Click "Add Mailbox Source" above to begin.
@@ -283,25 +297,42 @@ export const SettingsView: React.FC = () => {
                 <div key={acc.id} className="p-4 flex items-center justify-between hover:bg-bg-elevated transition-colors">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-200">{acc.display_name}</span>
-                      <span className="text-[11px] px-2 py-0.5 rounded bg-bg-deep border border-border-subtle uppercase text-slate-400 font-mono">
+                      <span className="font-bold text-white uppercase">{acc.display_name}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-none bg-bg-deep border border-border-subtle uppercase text-slate-300 font-mono">
                         {acc.provider}
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-400 mt-1">{acc.email_address}</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">
+                    {(acc.provider === 'imap' || acc.provider === 'gmail') && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono mt-1">
+                        <Key className="w-3 h-3" />
+                        <span>Credentials secured in Windows Credential Locker</span>
+                      </div>
+                    )}
+                    <div className="text-[10px] text-slate-500 mt-1">
                       Last Scanned: {acc.last_sync_at || 'Never'} • Created: {acc.created_at?.slice(0, 10)}
                     </div>
                   </div>
 
-                  <Button
-                    size="xs"
-                    variant="danger"
-                    onClick={() => handleDeleteAccount(acc.id)}
-                    icon={<Trash2 className="w-3.5 h-3.5" />}
-                  >
-                    Disconnect
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="xs"
+                      variant="primary"
+                      loading={syncingAccountId === acc.id}
+                      onClick={() => handleSyncAccount(acc.id)}
+                      icon={<RefreshCw className={`w-3 h-3 ${syncingAccountId === acc.id ? 'animate-spin' : ''}`} />}
+                    >
+                      Sync Now
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="danger"
+                      onClick={() => handleDeleteAccount(acc.id)}
+                      icon={<Trash2 className="w-3.5 h-3.5" />}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
                 </div>
               ))
             )}
@@ -465,7 +496,7 @@ export const SettingsView: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-slate-100 tracking-tight flex items-center gap-2">
-                  <Bot className="w-4 h-4 text-purple-400" />
+                  <Bot className="w-4 h-4 text-brand" />
                   Optional Local AI Assistant (Ollama)
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
@@ -496,9 +527,9 @@ export const SettingsView: React.FC = () => {
               )}
             </div>
 
-            <div className="p-3 bg-purple-950/20 border border-purple-800/40 rounded text-xs text-purple-200 space-y-1">
-              <span className="font-semibold">Safety & Autonomy Guarantee:</span>
-              <p className="text-[11px] text-purple-300/80 leading-relaxed">
+            <div className="p-3 bg-bg-elevated border border-border-muted rounded text-xs text-slate-300 space-y-1">
+              <span className="font-semibold text-brand-light">Safety & Autonomy Guarantee:</span>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
                 Even when local AI is active, models are strictly prohibited from independently authorizing or executing delete, archive, or move operations. All AI output is translated into an inspectable structured query that you must review before any action.
               </p>
             </div>

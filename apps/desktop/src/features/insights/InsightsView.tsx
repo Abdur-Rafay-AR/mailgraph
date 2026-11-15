@@ -47,7 +47,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
       case 'storage_dominator':
         return <HardDrive className="w-5 h-5 text-amber-400" />;
       case 'zombie_subscription':
-        return <Mail className="w-5 h-5 text-purple-400" />;
+        return <Mail className="w-5 h-5 text-brand" />;
       case 'large_attachments':
         return <AlertTriangle className="w-5 h-5 text-red-400" />;
       case 'unreplied_thread':

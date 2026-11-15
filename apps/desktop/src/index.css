@@ -3,26 +3,26 @@
 @tailwind utilities;
 
 @layer base {
-  /* Custom scrollbar for dense data views */
+  /* Technical minimalist scrollbar */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
   }
   ::-webkit-scrollbar-track {
-    background: #0c0814;
+    background: #0A0A0A;
   }
   ::-webkit-scrollbar-thumb {
-    background: #3d2b6e;
-    border-radius: 3px;
+    background: #282828;
+    border-radius: 2px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #6d45ba;
+    background: #FF3B30;
   }
 }
 
 /* Custom technical badge styles */
 .badge-tech {
-  @apply px-2 py-0.5 text-xs font-mono rounded tracking-tight border;
+  @apply px-2 py-0.5 text-xs font-mono tracking-tight border border-border-subtle bg-bg-surface text-slate-300;
 }
 
 /* Table row transition */
