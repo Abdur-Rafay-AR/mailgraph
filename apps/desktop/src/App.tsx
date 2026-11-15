@@ -11,7 +11,7 @@ import { AttachmentsView } from './features/attachments/AttachmentsView';
 import { InsightsView } from './features/insights/InsightsView';
 import { SettingsView } from './features/settings/SettingsView';
 import { api } from './api/client';
-import { OverviewStats, QueryAST } from './types/api';
+import { OverviewStats, QueryAST, SyncJob } from './types/api';
 
 export const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<NavView>('overview');
@@ -22,6 +22,9 @@ export const App: React.FC = () => {
   // Cross-view state handoffs
   const [messagesSenderFilter, setMessagesSenderFilter] = useState<string>('');
   const [cleanupInitialQuery, setCleanupInitialQuery] = useState<QueryAST | undefined>(undefined);
+
+  // Global background ingestion state
+  const [activeSyncJob, setActiveSyncJob] = useState<SyncJob | null>(null);
 
   const fetchGlobalStats = async () => {
     try {
@@ -38,6 +41,53 @@ export const App: React.FC = () => {
     const interval = setInterval(fetchGlobalStats, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  // Poll background sync telemetry (keeps running regardless of active tab)
+  useEffect(() => {
+    let isMounted = true;
+    const pollSync = async () => {
+      try {
+        const res = await api.getActiveSync();
+        if (!isMounted) return;
+        if (res.active && res.job) {
+          setActiveSyncJob(res.job);
+        } else {
+          setActiveSyncJob((prev) => {
+            if (prev && (prev.status === 'running' || prev.status === 'stopping')) {
+              // Sync just finished or stopped: refresh global stats
+              fetchGlobalStats();
+            }
+            return res.job || null;
+          });
+        }
+      } catch (_) {}
+    };
+
+    pollSync();
+    const interval = setInterval(pollSync, 800);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleStartSync = async (accountId: number, limit?: number) => {
+    try {
+      const res = await api.startBackgroundSync(accountId, limit);
+      setActiveSyncJob(res.job);
+    } catch (err: any) {
+      alert(err.message || 'Failed to start ingestion sync');
+    }
+  };
+
+  const handleStopSync = async () => {
+    try {
+      await api.stopActiveSync();
+      setActiveSyncJob((prev) => (prev ? { ...prev, status: 'stopping' } : null));
+    } catch (err: any) {
+      alert(err.message || 'Failed to stop ingestion sync');
+    }
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -138,6 +188,8 @@ export const App: React.FC = () => {
           loading={refreshing}
           backendOnline={backendOnline}
           onQuickDemo={stats?.total_messages === 0 ? handleQuickDemo : undefined}
+          activeSyncJob={activeSyncJob}
+          onStopSync={handleStopSync}
         />
 
         {/* View Router */}
@@ -212,7 +264,13 @@ export const App: React.FC = () => {
             />
           )}
 
-          {currentView === 'settings' && <SettingsView />}
+          {currentView === 'settings' && (
+            <SettingsView
+              activeSyncJob={activeSyncJob}
+              onStartSync={handleStartSync}
+              onStopSync={handleStopSync}
+            />
+          )}
         </main>
       </div>
     </div>

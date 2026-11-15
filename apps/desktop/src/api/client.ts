@@ -13,6 +13,7 @@ import {
   AppSettings,
   ProtectionRule,
   DuplicateAttachmentGroup,
+  SyncJob,
 } from '../types/api';
 
 const API_BASE = 'http://127.0.0.1:28491/api';
@@ -72,6 +73,15 @@ export const api = {
       `/accounts/${accountId}/sync${limit ? `?limit=${limit}` : ''}`,
       { method: 'POST' }
     ),
+  startBackgroundSync: (accountId: number, limit?: number) =>
+    request<{ status: string; job: SyncJob }>(
+      `/accounts/${accountId}/sync-start${limit !== undefined ? `?limit=${limit}` : ''}`,
+      { method: 'POST' }
+    ),
+  getActiveSync: () =>
+    request<{ active: boolean; job: SyncJob | null }>('/accounts/sync/active'),
+  stopActiveSync: () =>
+    request<{ status: string; stopped: boolean }>('/accounts/sync/stop', { method: 'POST' }),
 
   // Senders
   getSenders: (params: {

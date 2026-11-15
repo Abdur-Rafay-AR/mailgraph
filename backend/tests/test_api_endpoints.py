@@ -274,4 +274,38 @@ def test_account_sync_missing_keyring_credentials():
     assert sync_res.status_code == 400
     assert "credentials" in sync_res.json()["detail"].lower()
 
+def test_background_sync_lifecycle_and_stop():
+    """Verify background sync starts, reports progress, and can be stopped."""
+    import time
+    # 1. Create synthetic account
+    res = client.post("/api/accounts", json={
+        "provider": "synthetic",
+        "display_name": "BG Sync Test",
+        "email_address": "bgsync@mailgraph.local"
+    })
+    acc_id = res.json()["id"]
+
+    # 2. Start background sync with 100 messages
+    start_res = client.post(f"/api/accounts/{acc_id}/sync-start?limit=100")
+    assert start_res.status_code == 200
+    assert start_res.json()["status"] in ("started", "already_running")
+
+    # 3. Check active sync status endpoint
+    poll_res = client.get("/api/accounts/sync/active")
+    assert poll_res.status_code == 200
+    poll_data = poll_res.json()
+    assert "job" in poll_data
+    assert poll_data["job"]["account_id"] == acc_id
+
+    # 4. Stop sync
+    stop_res = client.post("/api/accounts/sync/stop")
+    assert stop_res.status_code == 200
+    assert stop_res.json()["status"] == "stopping"
+
+    # Wait briefly for thread to settle
+    time.sleep(0.5)
+    final_res = client.get("/api/accounts/sync/active").json()
+    assert final_res["job"]["status"] in ("stopped", "completed")
+
+
 

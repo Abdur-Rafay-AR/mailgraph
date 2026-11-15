@@ -13,14 +13,25 @@ import {
   Mail,
   Server,
   Key,
-  ExternalLink
+  ExternalLink,
+  Square
 } from 'lucide-react';
 import { api } from '../../api/client';
-import { Account, AppSettings, ProtectionRule } from '../../types/api';
+import { Account, AppSettings, ProtectionRule, SyncJob } from '../../types/api';
 import { Button } from '../../components/Button';
 import { Modal } from '../../components/Modal';
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  activeSyncJob?: SyncJob | null;
+  onStartSync?: (accountId: number, limit?: number) => Promise<void>;
+  onStopSync?: () => Promise<void>;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({
+  activeSyncJob,
+  onStartSync,
+  onStopSync,
+}) => {
   const [activeTab, setActiveTab] = useState<'accounts' | 'privacy' | 'protection' | 'ai'>('accounts');
 
   // Accounts state
@@ -155,16 +166,28 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleSyncAccount = async (id: number) => {
-    setSyncingAccountId(id);
-    try {
-      const res = await api.syncAccount(id);
-      alert(`Sync completed! Scanned ${res.scanned_count} messages, indexed ${res.inserted_count} new messages (${res.skipped_count} existing duplicates skipped).`);
-      await fetchData();
-    } catch (err: any) {
-      alert(err.message || 'Sync failed.');
-    } finally {
-      setSyncingAccountId(null);
+  const handleStartSync = async (id: number, limit?: number) => {
+    if (onStartSync) {
+      await onStartSync(id, limit);
+    } else {
+      try {
+        await api.startBackgroundSync(id, limit);
+        await fetchData();
+      } catch (err: any) {
+        alert(err.message || 'Failed to start ingestion sync');
+      }
+    }
+  };
+
+  const handleStopActiveSync = async () => {
+    if (onStopSync) {
+      await onStopSync();
+    } else {
+      try {
+        await api.stopActiveSync();
+      } catch (err: any) {
+        alert(err.message || 'Failed to stop sync');
+      }
     }
   };
 
@@ -293,48 +316,167 @@ export const SettingsView: React.FC = () => {
                 No accounts connected yet. Click "Add Mailbox Source" above to begin.
               </div>
             ) : (
-              accounts.map((acc) => (
-                <div key={acc.id} className="p-4 flex items-center justify-between hover:bg-bg-elevated transition-colors">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white uppercase">{acc.display_name}</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-none bg-bg-deep border border-border-subtle uppercase text-slate-300 font-mono">
-                        {acc.provider}
-                      </span>
+              accounts.map((acc) => {
+                const isThisAccountSyncing = Boolean(
+                  activeSyncJob &&
+                  activeSyncJob.account_id === acc.id &&
+                  (activeSyncJob.status === 'starting' ||
+                    activeSyncJob.status === 'running' ||
+                    activeSyncJob.status === 'stopping')
+                );
+
+                const isThisAccountCompleted = Boolean(
+                  activeSyncJob &&
+                  activeSyncJob.account_id === acc.id &&
+                  activeSyncJob.status === 'completed'
+                );
+
+                const isThisAccountStopped = Boolean(
+                  activeSyncJob &&
+                  activeSyncJob.account_id === acc.id &&
+                  activeSyncJob.status === 'stopped'
+                );
+
+                const isThisAccountFailed = Boolean(
+                  activeSyncJob &&
+                  activeSyncJob.account_id === acc.id &&
+                  activeSyncJob.status === 'failed'
+                );
+
+                return (
+                  <div key={acc.id} className="p-4 hover:bg-bg-elevated transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white uppercase">{acc.display_name}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-none bg-bg-deep border border-border-subtle uppercase text-slate-300 font-mono">
+                            {acc.provider}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-1">{acc.email_address}</div>
+                        {(acc.provider === 'imap' || acc.provider === 'gmail') && (
+                          <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono mt-1">
+                            <Key className="w-3 h-3" />
+                            <span>Credentials secured in Windows Credential Locker</span>
+                          </div>
+                        )}
+                        <div className="text-[10px] text-slate-500 mt-1">
+                          Last Scanned: {acc.last_sync_at || 'Never'} • Created: {acc.created_at?.slice(0, 10)}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isThisAccountSyncing && activeSyncJob ? (
+                          <Button
+                            size="xs"
+                            variant="danger"
+                            disabled={activeSyncJob.status === 'stopping'}
+                            onClick={handleStopActiveSync}
+                            icon={<Square className="w-3 h-3 fill-current" />}
+                            title="Immediately halt ingestion"
+                          >
+                            {activeSyncJob.status === 'stopping' ? 'Stopping...' : 'Stop Ingestion'}
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => handleStartSync(acc.id, 100)}
+                              icon={<RefreshCw className="w-3 h-3 text-slate-300" />}
+                              title="Fetch 100 most recent messages"
+                            >
+                              Sync Recent (100)
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="primary"
+                              onClick={() => handleStartSync(acc.id, 0)}
+                              icon={<RefreshCw className="w-3 h-3" />}
+                              title="Ingest all emails in connected inbox"
+                            >
+                              Get ALL Emails
+                            </Button>
+                          </>
+                        )}
+                        <Button
+                          size="xs"
+                          variant="danger"
+                          disabled={isThisAccountSyncing}
+                          onClick={() => handleDeleteAccount(acc.id)}
+                          icon={<Trash2 className="w-3.5 h-3.5" />}
+                        >
+                          Disconnect
+                        </Button>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-400 mt-1">{acc.email_address}</div>
-                    {(acc.provider === 'imap' || acc.provider === 'gmail') && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono mt-1">
-                        <Key className="w-3 h-3" />
-                        <span>Credentials secured in Windows Credential Locker</span>
+
+                    {/* Active Ingestion Progress Card */}
+                    {isThisAccountSyncing && activeSyncJob && (
+                      <div className="mt-3.5 p-3.5 bg-bg-deep border border-border-muted rounded-none font-mono">
+                        <div className="flex items-center justify-between text-xs mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 bg-brand animate-ping rounded-none inline-block" />
+                            <span className="text-white font-bold tracking-tight">
+                              {activeSyncJob.is_all ? 'DIGESTING ENTIRE INBOX (ALL MESSAGES)' : 'DIGESTING RECENT BATCH'}
+                            </span>
+                            <span className="text-slate-400 text-[10px] uppercase">[{activeSyncJob.status}]</span>
+                          </div>
+                          <div className="text-white tabular-nums font-bold">
+                            {activeSyncJob.scanned_count.toLocaleString()}
+                            {activeSyncJob.total_count > 0 ? ` / ${activeSyncJob.total_count.toLocaleString()}` : ''} emails
+                            <span className="text-brand font-bold ml-1.5">({activeSyncJob.pct}%)</span>
+                          </div>
+                        </div>
+
+                        {/* Progress Bar Track */}
+                        <div className="w-full bg-bg-surface border border-border-subtle h-3 overflow-hidden rounded-none">
+                          <div
+                            className="bg-brand h-full transition-all duration-300"
+                            style={{ width: `${Math.min(100, Math.max(0, activeSyncJob.pct))}%` }}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+                          <div>
+                            <span>New Indexed: <strong className="text-emerald-400 font-bold">{activeSyncJob.inserted_count.toLocaleString()}</strong></span>
+                            <span className="mx-2 text-slate-600">•</span>
+                            <span>Skipped: <strong className="text-slate-300">{activeSyncJob.skipped_count.toLocaleString()}</strong></span>
+                            {activeSyncJob.failed_count > 0 && (
+                              <>
+                                <span className="mx-2 text-slate-600">•</span>
+                                <span className="text-brand">Errors: {activeSyncJob.failed_count}</span>
+                              </>
+                            )}
+                          </div>
+                          <div>
+                            Throughput: <strong className="text-white tabular-nums">{activeSyncJob.speed}</strong> msg/s
+                          </div>
+                        </div>
                       </div>
                     )}
-                    <div className="text-[10px] text-slate-500 mt-1">
-                      Last Scanned: {acc.last_sync_at || 'Never'} • Created: {acc.created_at?.slice(0, 10)}
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="xs"
-                      variant="primary"
-                      loading={syncingAccountId === acc.id}
-                      onClick={() => handleSyncAccount(acc.id)}
-                      icon={<RefreshCw className={`w-3 h-3 ${syncingAccountId === acc.id ? 'animate-spin' : ''}`} />}
-                    >
-                      Sync Now
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="danger"
-                      onClick={() => handleDeleteAccount(acc.id)}
-                      icon={<Trash2 className="w-3.5 h-3.5" />}
-                    >
-                      Disconnect
-                    </Button>
+                    {/* Post-Sync Status Summaries */}
+                    {isThisAccountCompleted && activeSyncJob && (
+                      <div className="mt-2.5 p-2.5 bg-emerald-950/20 border border-emerald-800/40 text-emerald-300 text-xs font-mono">
+                        ✓ Ingestion completed: {activeSyncJob.scanned_count.toLocaleString()} messages scanned, {activeSyncJob.inserted_count.toLocaleString()} newly indexed.
+                      </div>
+                    )}
+
+                    {isThisAccountStopped && activeSyncJob && (
+                      <div className="mt-2.5 p-2.5 bg-amber-950/20 border border-amber-800/40 text-amber-300 text-xs font-mono">
+                        ⏹ Ingestion stopped by user at {activeSyncJob.scanned_count.toLocaleString()} messages ({activeSyncJob.inserted_count.toLocaleString()} newly indexed).
+                      </div>
+                    )}
+
+                    {isThisAccountFailed && activeSyncJob && (
+                      <div className="mt-2.5 p-2.5 bg-brand/10 border border-brand/30 text-brand text-xs font-mono">
+                        ✕ Ingestion failed: {activeSyncJob.error_message}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -660,6 +802,7 @@ export const SettingsView: React.FC = () => {
                   <option value={100}>100 most recent messages (Recommended)</option>
                   <option value={250}>250 most recent messages</option>
                   <option value={500}>500 most recent messages</option>
+                  <option value={0}>All messages in inbox (Complete mailbox ingestion)</option>
                 </select>
               </div>
             </div>
@@ -722,6 +865,7 @@ export const SettingsView: React.FC = () => {
                   <option value={100}>100 messages (Recommended)</option>
                   <option value={250}>250 messages</option>
                   <option value={500}>500 messages</option>
+                  <option value={0}>All messages in inbox (Complete mailbox ingestion)</option>
                 </select>
               </div>
             </div>

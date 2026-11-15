@@ -276,3 +276,21 @@ export interface DuplicateAttachmentGroup {
     sender_address: string;
   }[];
 }
+
+export interface SyncJob {
+  account_id: number;
+  status: 'starting' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed';
+  folder: string;
+  total_count: number;
+  scanned_count: number;
+  inserted_count: number;
+  skipped_count: number;
+  failed_count: number;
+  pct: number;
+  speed: number;
+  started_at: number;
+  error_message: string | null;
+  email_address: string;
+  is_all: boolean;
+}
+

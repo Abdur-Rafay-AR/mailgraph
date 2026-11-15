@@ -171,7 +171,11 @@ def connect_imap(req: ImapConnectRequest, initial_scan_limit: Optional[int] = 10
 
     # 4. Run initial scan if requested
     inserted = 0
-    if initial_scan_limit and initial_scan_limit > 0:
+    if initial_scan_limit is not None and initial_scan_limit <= 0:
+        pipeline = IngestionPipeline(db)
+        res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=None))
+        inserted = res.inserted_count
+    elif initial_scan_limit and initial_scan_limit > 0:
         pipeline = IngestionPipeline(db)
         res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=initial_scan_limit))
         inserted = res.inserted_count
@@ -250,3 +254,30 @@ def sync_account(account_id: int, limit: Optional[int] = 100):
         "skipped_count": res.skipped_count,
         "failed_count": res.failed_count
     }
+
+@router.post("/{account_id}/sync-start")
+def start_background_sync(account_id: int, limit: Optional[int] = None):
+    """
+    Launch asynchronous ingestion job in a background worker thread.
+    Allows fetching ALL emails without blocking the HTTP server or UI navigation.
+    """
+    from backend.app.ingestion.sync_manager import sync_manager
+    res = sync_manager.start_sync(account_id, limit=limit)
+    return res
+
+@router.get("/sync/active")
+def get_active_sync_status():
+    """Poll active background ingestion job telemetry (scanned, inserted, total, pct, speed)."""
+    from backend.app.ingestion.sync_manager import sync_manager
+    job = sync_manager.get_active_job()
+    return {
+        "active": bool(job and job.get("status") in ("starting", "running", "stopping")),
+        "job": job
+    }
+
+@router.post("/sync/stop")
+def stop_active_sync():
+    """Gracefully cancel and stop any active background ingestion job."""
+    from backend.app.ingestion.sync_manager import sync_manager
+    stopped = sync_manager.stop_active_sync()
+    return {"status": "stopping" if stopped else "no_active_job"}
