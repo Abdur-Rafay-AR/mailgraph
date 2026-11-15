@@ -18,6 +18,12 @@
   ::-webkit-scrollbar-thumb:hover {
     background: #FF3B30;
   }
+
+  /* Clean, proportional & tabular numbers without dotted or slashed zeros */
+  body, .font-mono, [class*="font-mono"] {
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+  }
 }
 
 /* Custom technical badge styles */

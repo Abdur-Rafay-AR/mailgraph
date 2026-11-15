@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw, Shield, Sparkles } from 'lucide-react';
+import { RefreshCw, Database } from 'lucide-react';
 import { Button } from './Button';
 
 interface HeaderProps {
@@ -40,7 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
             size="sm"
             variant="outline"
             onClick={onQuickDemo}
-            icon={<Sparkles className="w-3.5 h-3.5 text-amber-400" />}
+            icon={<Database className="w-3.5 h-3.5 text-slate-300" />}
           >
             Load Demo Data
           </Button>

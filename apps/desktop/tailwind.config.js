@@ -28,7 +28,7 @@ export default {
       },
       fontFamily: {
         sans: ['"Space Grotesk"', 'Segoe UI', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'Fira Code', 'Consolas', 'monospace'],
+        mono: ['"Space Grotesk"', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
         DEFAULT: '2px',

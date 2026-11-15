@@ -6,7 +6,7 @@ import {
   Trash2,
   Plus,
   RefreshCw,
-  Sparkles,
+  Database,
   Bot,
   AlertTriangle,
   FolderOpen,
@@ -588,8 +588,8 @@ export const SettingsView: React.FC = () => {
                   : 'bg-bg-deep border-border-muted text-slate-400 hover:text-slate-200'
               }`}
             >
-              <div className="font-semibold text-slate-100 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-400" /> Synthetic Demo Box
+              <div className="font-semibold text-slate-100 flex items-center gap-1.5 font-sans">
+                <Database className="w-4 h-4 text-slate-300" /> Synthetic Demo Box
               </div>
               <div className="text-[11px] text-slate-400 mt-1">
                 Instantly generate realistic multi-domain emails with zero credentials needed.

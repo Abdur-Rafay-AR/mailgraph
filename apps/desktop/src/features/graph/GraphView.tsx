@@ -8,7 +8,7 @@ import {
   ExternalLink,
   Trash2,
   Users,
-  Sparkles,
+  Orbit,
   GitFork,
   CircleDot,
   LayoutGrid,
@@ -479,7 +479,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
               }`}
               title="Force-directed spring physics layout"
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <Orbit className="w-3.5 h-3.5" />
               <span>Galaxy</span>
             </button>
             <button

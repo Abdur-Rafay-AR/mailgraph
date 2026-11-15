@@ -4,7 +4,8 @@ import {
   Users,
   HardDrive,
   Clock,
-  Sparkles,
+  Database,
+  Layers,
   ArrowRight,
   Shield,
   GitFork,
@@ -71,12 +72,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
     <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-bg-deep select-none">
       {/* Empty State Banner if no messages exist */}
       {stats && stats.total_messages === 0 && (
-        <div className="p-6 rounded-lg bg-bg-surface border border-brand/40 shadow-xl space-y-3">
-          <div className="flex items-center gap-2.5 text-brand-light font-semibold text-sm">
-            <Sparkles className="w-5 h-5 text-amber-400" />
+        <div className="p-6 rounded-none bg-bg-surface border border-brand shadow-xl space-y-3">
+          <div className="flex items-center gap-2.5 text-brand font-bold text-sm uppercase font-sans">
+            <Database className="w-5 h-5 text-brand" />
             Welcome to MailGraph: No mailbox data indexed yet
           </div>
-          <p className="text-xs text-slate-300 leading-relaxed max-w-2xl">
+          <p className="text-xs text-slate-300 leading-relaxed max-w-2xl font-mono">
             MailGraph runs entirely offline on your local machine. You can import an offline MBOX archive, connect your Gmail or IMAP account, or instantly generate realistic synthetic demo data to test search, interactive graphs, and safe bulk cleanup workflows.
           </p>
           <div className="flex items-center gap-3 pt-2">
@@ -85,7 +86,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               variant="primary"
               loading={demoLoading}
               onClick={handleGenerateDemo}
-              icon={<Sparkles className="w-4 h-4 text-amber-300" />}
+              icon={<Database className="w-4 h-4 text-white" />}
             >
               Generate Synthetic Mailbox (75 emails)
             </Button>
@@ -199,10 +200,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
 
         {/* Category Breakdown */}
-        <div className="bg-bg-surface rounded-lg border border-border-subtle p-5 shadow-sm space-y-4">
+        <div className="bg-bg-surface rounded-none border border-border-subtle p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-100 tracking-tight flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400" />
+            <h3 className="text-sm font-bold text-white tracking-tight uppercase font-sans flex items-center gap-2">
+              <Layers className="w-4 h-4 text-slate-400" />
               Category Classification Breakdown
             </h3>
             <button
