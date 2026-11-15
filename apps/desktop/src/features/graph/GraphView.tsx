@@ -49,6 +49,12 @@ export const GraphView: React.FC<GraphViewProps> = ({
   // Selected node inspection panel
   const [selectedNode, setSelectedNode] = useState<GraphNodeData | null>(null);
 
+  // Hovered node floating enlarged HUD
+  const [hoveredNode, setHoveredNode] = useState<{
+    data: GraphNodeData;
+    position: { x: number; y: number };
+  } | null>(null);
+
   const getLayoutConfig = (mode: LayoutMode): LayoutOptions => {
     switch (mode) {
       case 'galaxy':
@@ -273,11 +279,14 @@ export const GraphView: React.FC<GraphViewProps> = ({
           {
             selector: 'node.node-hovered',
             style: {
-              'border-width': 3,
+              'border-width': 3.5,
               'border-color': '#ffffff',
               'underlay-color': '#FF3B30',
-              'underlay-padding': '8px',
-              'underlay-opacity': 0.5,
+              'underlay-padding': '10px',
+              'underlay-opacity': 0.65,
+              'font-size': '13px',
+              'font-weight': 'bold',
+              'z-index': 9999,
             },
           },
           {
@@ -306,17 +315,37 @@ export const GraphView: React.FC<GraphViewProps> = ({
         layout: getLayoutConfig(layoutMode),
       });
 
-      // Interactive Spotlight Radar on Node Hover
+      // Interactive Spotlight Radar & Floating Enlarged HUD on Node Hover
       cy.on('mouseover', 'node', (evt: EventObject) => {
         const targetNode = evt.target;
         const neighborhood = targetNode.closedNeighborhood();
         cy.elements().removeClass('spotlight node-hovered').addClass('dimmed');
         neighborhood.removeClass('dimmed').addClass('spotlight');
         targetNode.addClass('node-hovered');
+
+        const renderedPos = targetNode.renderedPosition();
+        setHoveredNode({
+          data: targetNode.data(),
+          position: { x: renderedPos.x, y: renderedPos.y },
+        });
+      });
+
+      cy.on('mousemove', 'node', (evt: EventObject) => {
+        const targetNode = evt.target;
+        const renderedPos = targetNode.renderedPosition();
+        setHoveredNode({
+          data: targetNode.data(),
+          position: { x: renderedPos.x, y: renderedPos.y },
+        });
       });
 
       cy.on('mouseout', 'node', () => {
         cy.elements().removeClass('spotlight dimmed node-hovered');
+        setHoveredNode(null);
+      });
+
+      cy.on('pan zoom', () => {
+        setHoveredNode(null);
       });
 
       // Node selection listener
@@ -555,6 +584,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
             className="bg-bg-deep border border-border-muted rounded-none px-2.5 py-1 text-xs text-white focus:outline-none focus:border-brand font-mono"
           >
             <option value="">All Categories</option>
+            <option value="finance">Finance & Banking</option>
             <option value="important">Important</option>
             <option value="personal">Personal</option>
             <option value="work">Work</option>
@@ -604,6 +634,73 @@ export const GraphView: React.FC<GraphViewProps> = ({
             Layout: {layoutMode}
           </span>
         </div>
+
+        {/* Floating Enlarged Node HUD on Hover */}
+        {hoveredNode && (
+          <div
+            className="absolute z-30 pointer-events-none transition-all duration-75 ease-out"
+            style={{
+              left: `${hoveredNode.position.x}px`,
+              top: `${hoveredNode.position.y - 14}px`,
+              transform: 'translate(-50%, -100%)',
+            }}
+          >
+            <div className="bg-[#0A0A0A]/95 border-2 border-brand px-3.5 py-2.5 rounded-none shadow-[0_12px_32px_rgba(0,0,0,0.9)] backdrop-blur-md max-w-sm text-left">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="w-2 h-2 bg-brand rounded-none inline-block animate-pulse" />
+                <span className="text-[10px] font-mono uppercase tracking-wider text-brand font-bold">
+                  {hoveredNode.data.node_type === 'hub'
+                    ? 'Mailbox Hub'
+                    : hoveredNode.data.node_type === 'domain'
+                    ? 'Domain Cluster'
+                    : 'Sender'}
+                </span>
+                {hoveredNode.data.category && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 bg-bg-surface border border-border-muted text-slate-300 uppercase">
+                    {hoveredNode.data.category}
+                  </span>
+                )}
+              </div>
+
+              {/* Enlarged High-Legibility Title */}
+              <div className="text-sm font-bold text-white tracking-tight break-all font-sans leading-snug">
+                {hoveredNode.data.label || hoveredNode.data.id}
+              </div>
+
+              {hoveredNode.data.domain && hoveredNode.data.node_type === 'sender' && (
+                <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                  @{hoveredNode.data.domain}
+                </div>
+              )}
+
+              {/* Telemetry row */}
+              <div className="flex items-center gap-3 mt-2 pt-1.5 border-t border-border-muted text-xs font-mono text-slate-300">
+                <div>
+                  <span className="text-slate-500">Volume: </span>
+                  <strong className="text-white font-bold">{hoveredNode.data.message_count || 1}</strong> msgs
+                </div>
+                {hoveredNode.data.total_bytes ? (
+                  <div>
+                    <span className="text-slate-500">Size: </span>
+                    <strong className="text-white font-bold">
+                      {hoveredNode.data.total_bytes > 1024 * 1024
+                        ? `${(hoveredNode.data.total_bytes / (1024 * 1024)).toFixed(1)} MB`
+                        : `${Math.round(hoveredNode.data.total_bytes / 1024)} KB`}
+                    </strong>
+                  </div>
+                ) : null}
+              </div>
+
+              {hoveredNode.data.node_type === 'domain' && (
+                <div className="text-[10px] font-mono text-slate-400 mt-1 italic">
+                  Double-click to drill down into domain senders
+                </div>
+              )}
+            </div>
+            {/* Pointer arrow down */}
+            <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-brand mx-auto -mt-[1px]" />
+          </div>
+        )}
 
         {/* Floating Zoom & Fit Controls */}
         <div className="absolute bottom-5 left-5 flex flex-col gap-1.5 bg-bg-surface border border-border-muted rounded-none p-1.5 shadow-xl z-20">

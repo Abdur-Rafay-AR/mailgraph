@@ -64,3 +64,28 @@ def test_classify_calendar():
     )
     cat, confidence, reason = engine.classify(email_msg)
     assert cat == "calendar"
+
+def test_classify_finance_nayapay():
+    engine = RulesEngine()
+    email_msg = ParsedEmail(
+        provider_message_id="fin_1",
+        subject="Money received in your NayaPay wallet",
+        sender_address="alerts@nayapay.com",
+        sender_domain="nayapay.com"
+    )
+    cat, confidence, reason = engine.classify(email_msg)
+    assert cat == "finance"
+    assert confidence >= 0.9
+
+def test_classify_finance_ubl_alert():
+    engine = RulesEngine()
+    email_msg = ParsedEmail(
+        provider_message_id="fin_2",
+        subject="UBL Digital: Raast IBFT Funds Transfer Alert",
+        sender_address="ebanking@ubldirect.com",
+        sender_domain="ubldirect.com"
+    )
+    cat, confidence, reason = engine.classify(email_msg)
+    assert cat == "finance"
+    assert confidence >= 0.9
+

@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/timeline", tags=["timeline"])
 @router.get("/volume")
 def get_volume_timeline(
     group_by: str = Query("month", pattern="^(year|month|day)$"),
+    limit: Optional[int] = None,
     conn: sqlite3.Connection = Depends(get_db)
 ):
     """Calculate message volume and storage trend grouped by time interval."""
@@ -22,7 +23,8 @@ def get_volume_timeline(
     elif group_by == "day":
         fmt = "%Y-%m-%d"
         
-    cursor.execute(f"""
+    order_clause = "DESC" if limit else "ASC"
+    query = f"""
         SELECT 
             strftime('{fmt}', received_at) as period,
             COUNT(*) as message_count,
@@ -31,10 +33,17 @@ def get_volume_timeline(
         FROM messages
         WHERE received_at IS NOT NULL
         GROUP BY period
-        ORDER BY period ASC;
-    """)
+        ORDER BY period {order_clause}
+    """
+    if limit and limit > 0:
+        query += f" LIMIT {int(limit)}"
+        
+    cursor.execute(query)
     rows = cursor.fetchall()
     
+    if limit and limit > 0:
+        rows = list(reversed(rows))
+        
     return [
         {
             "period": r[0],
@@ -46,7 +55,7 @@ def get_volume_timeline(
     ]
 
 @router.get("/senders")
-def get_sender_timeline(limit: int = 10, conn: sqlite3.Connection = Depends(get_db)):
+def get_sender_timeline(limit: int = 15, conn: sqlite3.Connection = Depends(get_db)):
     """Analyze high-volume sender lifecycles: first observed, peak, and most recent."""
     cursor = conn.cursor()
     cursor.execute("""
@@ -80,3 +89,29 @@ def get_sender_timeline(limit: int = 10, conn: sqlite3.Connection = Depends(get_
         }
         for r in rows
     ]
+
+@router.get("/cadence")
+def get_timeline_cadence(conn: sqlite3.Connection = Depends(get_db)):
+    """Calculate day-of-week volume distribution (Monday to Sunday)."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            strftime('%w', received_at) as dow,
+            COUNT(*) as message_count,
+            COALESCE(SUM(size_bytes), 0) as total_bytes
+        FROM messages
+        WHERE received_at IS NOT NULL
+        GROUP BY dow
+        ORDER BY dow ASC;
+    """)
+    rows = cursor.fetchall()
+    dow_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    dow_map = {str(i): {"day": dow_names[i], "day_index": i, "count": 0, "bytes": 0} for i in range(7)}
+    for r in rows:
+        if str(r[0]) in dow_map:
+            dow_map[str(r[0])]["count"] = r[1]
+            dow_map[str(r[0])]["bytes"] = r[2]
+
+    # Reorder starting Monday (Mon-Sun standard ISO)
+    ordered = [dow_map[str(i)] for i in [1, 2, 3, 4, 5, 6, 0]]
+    return ordered

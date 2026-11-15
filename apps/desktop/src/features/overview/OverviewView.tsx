@@ -10,7 +10,8 @@ import {
   Shield,
   GitFork,
   Trash2,
-  AlertCircle
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { OverviewStats } from '../../types/api';
@@ -20,11 +21,15 @@ import { Badge } from '../../components/Badge';
 interface OverviewViewProps {
   onNavigate: (view: any) => void;
   onOpenSenderMessages?: (senderAddress: string) => void;
+  onSyncMailbox?: () => void;
+  isSyncActive?: boolean;
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
   onNavigate,
   onOpenSenderMessages,
+  onSyncMailbox,
+  isSyncActive = false,
 }) => {
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -70,6 +75,55 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-bg-deep select-none">
+      {/* Top Action & Sync Ribbon (Top-Left Quick Controls) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-bg-surface p-3.5 border border-border-subtle rounded-none font-mono text-xs">
+        <div className="flex items-center gap-2.5">
+          {onSyncMailbox && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={onSyncMailbox}
+              loading={isSyncActive}
+              disabled={isSyncActive}
+              icon={<RefreshCw className={`w-3.5 h-3.5 ${isSyncActive ? 'animate-spin' : ''}`} />}
+            >
+              {isSyncActive ? 'Syncing Mailbox...' : 'Sync Mailbox'}
+            </Button>
+          )}
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={fetchStats}
+            loading={loading}
+            icon={<RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />}
+            title="Refresh database stats"
+          >
+            Refresh
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onNavigate('settings')}
+            title="Configure mailbox accounts"
+          >
+            Settings & Full Ingestion
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+          <span className="w-2 h-2 rounded-none bg-emerald-400 inline-block" />
+          <span>Local Store Active</span>
+          {stats?.recent_sync?.completed_at && (
+            <>
+              <span className="text-slate-600">•</span>
+              <span>Last Ingested: {stats.recent_sync.completed_at.slice(0, 16).replace('T', ' ')}</span>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Empty State Banner if no messages exist */}
       {stats && stats.total_messages === 0 && (
         <div className="p-6 rounded-none bg-bg-surface border border-brand shadow-xl space-y-3">

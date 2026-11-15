@@ -42,7 +42,7 @@ def test_default_categories_seeded():
         
         expected_categories = {
             "important", "personal", "work", "university",
-            "transactional", "receipt_invoice", "security", "calendar",
+            "transactional", "finance", "receipt_invoice", "security", "calendar",
             "notification", "newsletter", "promotional", "social",
             "automated_report", "cold_outreach", "unknown"
         }

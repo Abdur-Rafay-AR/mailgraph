@@ -154,10 +154,14 @@ export const api = {
   listOperations: () => request<CleanupOperation[]>('/cleanup/operations'),
 
   // Timeline
-  getTimelineVolume: (groupBy: 'year' | 'month' | 'day' = 'month') =>
-    request<{ period: string; message_count: number; total_bytes: number; unread_count: number }[]>(`/timeline/volume?group_by=${groupBy}`),
-  getTimelineSenders: (limit = 10) =>
+  getTimelineVolume: (groupBy: 'year' | 'month' | 'day' = 'month', limit?: number) =>
+    request<{ period: string; message_count: number; total_bytes: number; unread_count: number }[]>(
+      `/timeline/volume?group_by=${groupBy}${limit ? `&limit=${limit}` : ''}`
+    ),
+  getTimelineSenders: (limit = 15) =>
     request<any[]>(`/timeline/senders?limit=${limit}`),
+  getTimelineCadence: () =>
+    request<{ day: string; day_index: number; count: number; bytes: number }[]>('/timeline/cadence'),
 
   // Attachments
   getAttachments: (params: { search?: string; mime_type?: string; min_size?: number; page?: number; page_size?: number }) => {

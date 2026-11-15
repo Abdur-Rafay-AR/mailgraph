@@ -10,6 +10,7 @@ CATEGORY_COLORS: Dict[str, str] = {
     "work": "#3b82f6",
     "university": "#8b5cf6",
     "transactional": "#06b6d4",
+    "finance": "#10b981",
     "receipt_invoice": "#f59e0b",
     "security": "#dc2626",
     "calendar": "#6366f1",

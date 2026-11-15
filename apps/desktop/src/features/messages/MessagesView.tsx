@@ -204,6 +204,7 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
               className="bg-bg-deep border border-border-muted rounded px-2.5 py-1 text-xs text-slate-200 focus:outline-none"
             >
               <option value="">All Categories</option>
+              <option value="finance">Finance & Banking</option>
               <option value="important">Important</option>
               <option value="personal">Personal</option>
               <option value="work">Work</option>

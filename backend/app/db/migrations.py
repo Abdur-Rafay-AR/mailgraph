@@ -10,6 +10,7 @@ DEFAULT_CATEGORIES: List[Tuple[str, str, str]] = [
     ("work", "Professional communications, projects, colleagues", "#3b82f6"),
     ("university", "Academic, educational, course updates", "#8b5cf6"),
     ("transactional", "Order confirmations, tracking, flight itineraries", "#06b6d4"),
+    ("finance", "Banking, fintech, wallets, financial transactions, and account statements", "#10b981"),
     ("receipt_invoice", "Financial receipts, invoices, billing statements", "#f59e0b"),
     ("security", "Password resets, 2FA alerts, login notifications", "#dc2626"),
     ("calendar", "Calendar invitations, RSVPs, meeting updates", "#6366f1"),
@@ -50,7 +51,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             INSERT OR IGNORE INTO categories (name, description, is_system, color)
             VALUES (?, ?, 1, ?);
         """, (name, desc, color))
-        
+
     # 5. Seed baseline protection rules
     for rule_type, val, reason in DEFAULT_PROTECTION_RULES:
         cursor.execute("""
@@ -60,8 +61,39 @@ def run_migrations(conn: sqlite3.Connection) -> None:
                 SELECT 1 FROM protection_rules WHERE rule_type = ? AND rule_value = ?
             );
         """, (rule_type, val, reason, rule_type, val))
+
+    # 6. Backfill finance category for banking and fintech senders (NayaPay, UBL, etc.)
+    cursor.execute("""
+        INSERT OR REPLACE INTO message_categories (message_id, category_id, source, confidence, reason)
+        SELECT m.id, (SELECT id FROM categories WHERE name = 'finance'), 'rule', 0.95, 'Financial institution or banking alert'
+        FROM messages m
+        JOIN senders s ON m.sender_id = s.id
+        WHERE (SELECT id FROM categories WHERE name = 'finance') IS NOT NULL
+          AND (
+            s.domain IN (
+                'nayapay.com', 'sadapay.pk', 'ubldirect.com', 'ubl.com.pk', 'meezanbank.com', 'hbl.com',
+                'bankalfalah.com', 'sc.com', 'mcb.com.pk', 'abl.com', 'askaribank.com', 'faysalbank.com',
+                'jazzcash.com.pk', 'easypaisa.com.pk', 'paypal.com', 'wise.com', 'revolut.com', 'stripe.com',
+                'chase.com', 'bankofamerica.com', 'wellsfargo.com', 'citi.com', 'barclays.com', 'hsbc.com'
+            )
+            OR LOWER(s.normalized_address) LIKE '%nayapay%'
+            OR LOWER(s.normalized_address) LIKE '%ubl%'
+            OR LOWER(s.normalized_address) LIKE '%meezan%'
+            OR LOWER(s.normalized_address) LIKE '%sadapay%'
+            OR LOWER(s.normalized_address) LIKE '%easypaisa%'
+            OR LOWER(s.normalized_address) LIKE '%jazzcash%'
+            OR LOWER(s.display_name) LIKE '%nayapay%'
+            OR LOWER(s.display_name) LIKE '%ubl%'
+            OR LOWER(s.display_name) LIKE '%meezan%'
+            OR LOWER(m.subject) LIKE '%ibft%'
+            OR LOWER(m.subject) LIKE '%raast%'
+            OR LOWER(m.subject) LIKE '%account debited%'
+            OR LOWER(m.subject) LIKE '%account credited%'
+            OR LOWER(m.subject) LIKE '%funds transfer%'
+          );
+    """)
         
-    # 6. Record migration version 1
+    # 7. Record migration version 1
     cursor.execute("""
         INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);
     """)

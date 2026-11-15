@@ -7,6 +7,7 @@ interface HeaderProps {
   title: string;
   subtitle?: string;
   onRefresh?: () => void;
+  onSyncMailbox?: () => void;
   loading?: boolean;
   onQuickDemo?: () => void;
   backendOnline?: boolean;
@@ -18,17 +19,19 @@ export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   onRefresh,
+  onSyncMailbox,
   loading = false,
   onQuickDemo,
   backendOnline = true,
   activeSyncJob,
   onStopSync,
 }) => {
-  const isSyncActive =
+  const isSyncActive = Boolean(
     activeSyncJob &&
     (activeSyncJob.status === 'starting' ||
       activeSyncJob.status === 'running' ||
-      activeSyncJob.status === 'stopping');
+      activeSyncJob.status === 'stopping')
+  );
 
   return (
     <header className="h-14 bg-bg-surface border-b border-border-subtle px-6 flex items-center justify-between shrink-0 select-none">
@@ -49,7 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       <div className="flex items-center gap-3">
         {/* Real-time Ingestion Progress HUD (visible across all tabs) */}
-        {isSyncActive && (
+        {isSyncActive && activeSyncJob && (
           <div className="flex items-center gap-3 bg-bg-deep border border-border-muted px-3 py-1.5 rounded-none text-xs font-mono shadow-sm">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-none bg-brand animate-ping" />
@@ -106,6 +109,20 @@ export const Header: React.FC<HeaderProps> = ({
             icon={<Database className="w-3.5 h-3.5 text-slate-300" />}
           >
             Load Demo Data
+          </Button>
+        )}
+
+        {onSyncMailbox && (
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={onSyncMailbox}
+            loading={isSyncActive}
+            disabled={isSyncActive}
+            icon={<RefreshCw className={`w-3.5 h-3.5 ${isSyncActive ? 'animate-spin' : ''}`} />}
+            title="Sync latest emails from connected mailbox"
+          >
+            {isSyncActive ? 'Syncing...' : 'Sync Mailbox'}
           </Button>
         )}
 

@@ -89,6 +89,21 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSyncMailbox = async () => {
+    try {
+      const accounts = await api.getAccounts();
+      if (!accounts || accounts.length === 0) {
+        alert('No mailbox accounts connected yet. Please connect an account in Settings first.');
+        setCurrentView('settings');
+        return;
+      }
+      const targetAcc = accounts.find((a) => a.provider === 'imap' || a.provider === 'gmail') || accounts[0];
+      await handleStartSync(targetAcc.id, 100);
+    } catch (err: any) {
+      alert(err.message || 'Failed to start mailbox sync');
+    }
+  };
+
   const handleRefresh = async () => {
     setRefreshing(true);
     await fetchGlobalStats();
@@ -185,6 +200,7 @@ export const App: React.FC = () => {
           title={viewTitles[currentView].title}
           subtitle={viewTitles[currentView].subtitle}
           onRefresh={handleRefresh}
+          onSyncMailbox={handleSyncMailbox}
           loading={refreshing}
           backendOnline={backendOnline}
           onQuickDemo={stats?.total_messages === 0 ? handleQuickDemo : undefined}
@@ -197,6 +213,13 @@ export const App: React.FC = () => {
           {currentView === 'overview' && (
             <OverviewView
               onNavigate={setCurrentView}
+              onSyncMailbox={handleSyncMailbox}
+              isSyncActive={Boolean(
+                activeSyncJob &&
+                  (activeSyncJob.status === 'running' ||
+                    activeSyncJob.status === 'starting' ||
+                    activeSyncJob.status === 'stopping')
+              )}
               onOpenSenderMessages={(addr) => {
                 setMessagesSenderFilter(addr);
                 setCurrentView('messages');
