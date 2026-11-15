@@ -12,13 +12,31 @@ function createWindow() {
     height: 880,
     minWidth: 1024,
     minHeight: 700,
-    backgroundColor: '#0c0814',
+    backgroundColor: '#0A0A0A',
     title: 'MailGraph',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true
+    }
+  });
+
+  // Security: deny new-window creation and open external links in default OS browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  // Security: prevent in-app navigation away from application UI
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== mainWindow.webContents.getURL()) {
+      event.preventDefault();
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
     }
   });
 

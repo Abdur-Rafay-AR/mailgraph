@@ -124,7 +124,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ onOpenSenderMessages
       {/* Sender Lifecycles Table */}
       <div className="bg-bg-surface border border-border-subtle rounded-lg p-5 shadow-sm space-y-4">
         <h3 className="text-sm font-semibold text-slate-100 tracking-tight flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-purple-400" />
+          <TrendingUp className="w-4 h-4 text-brand" />
           Sender Activity Lifecycles (First Observed vs Recent)
         </h3>
 

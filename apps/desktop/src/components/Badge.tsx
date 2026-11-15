@@ -19,9 +19,9 @@ export const Badge: React.FC<BadgeProps> = ({
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono font-medium rounded border',
-        variant === 'subtle' && 'bg-slate-800/80 text-slate-300 border-slate-700/60',
-        variant === 'outline' && 'border-slate-700 text-slate-400 bg-transparent',
+        'inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono font-medium rounded-none border',
+        variant === 'subtle' && 'bg-bg-elevated text-slate-300 border-border-muted',
+        variant === 'outline' && 'border-border-muted text-slate-400 bg-transparent',
         className
       )}
       style={color ? { borderColor: `${color}60`, color: color } : undefined}

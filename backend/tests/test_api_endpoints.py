@@ -216,3 +216,62 @@ def test_senders_cleaned_disappear_from_list_and_overview():
     refreshed_ids = [s["id"] for s in refreshed_senders]
     assert target_sender_id not in refreshed_ids
 
+def test_cors_security_origin_restriction():
+    """Verify that localhost and null origins are allowed, while external origins are blocked."""
+    # 1. Allowed localhost origin (Vite dev server)
+    res_local = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert res_local.status_code == 200
+    assert res_local.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    # 2. Allowed null origin (Electron local file bundle)
+    res_null = client.get("/api/health", headers={"Origin": "null"})
+    assert res_null.status_code == 200
+    assert res_null.headers.get("access-control-allow-origin") == "null"
+
+    # 3. Blocked external / malicious origin
+    res_external = client.get("/api/health", headers={"Origin": "https://malicious-website.com"})
+    assert res_external.status_code == 200
+    assert res_external.headers.get("access-control-allow-origin") is None
+
+def test_account_sync_endpoint_synthetic():
+    """Verify that an existing account can be synced without re-entering credentials."""
+    # 1. Create synthetic account
+    res = client.post("/api/accounts", json={
+        "provider": "synthetic",
+        "display_name": "Sync Test Mailbox",
+        "email_address": "sync_test@mailgraph.local"
+    })
+    assert res.status_code == 200
+    account_id = res.json()["id"]
+
+    # 2. Trigger sync
+    sync_res = client.post(f"/api/accounts/{account_id}/sync?limit=15")
+    assert sync_res.status_code == 200
+    data = sync_res.json()
+    assert data["status"] == "success"
+    assert data["account_id"] == account_id
+    assert data["inserted_count"] > 0
+
+    # 3. Verify last_sync_at is updated
+    accounts = client.get("/api/accounts").json()
+    target = next(a for a in accounts if a["id"] == account_id)
+    assert target["last_sync_at"] is not None
+
+def test_account_sync_missing_account():
+    """Verify 404 for non-existent account sync."""
+    res = client.post("/api/accounts/999999/sync")
+    assert res.status_code == 404
+
+def test_account_sync_missing_keyring_credentials():
+    """Verify error when OS keyring does not contain credentials for an IMAP account."""
+    res = client.post("/api/accounts", json={
+        "provider": "imap",
+        "display_name": "No Creds Account",
+        "email_address": "nocreds@example.com"
+    })
+    acc_id = res.json()["id"]
+    sync_res = client.post(f"/api/accounts/{acc_id}/sync")
+    assert sync_res.status_code == 400
+    assert "credentials" in sync_res.json()["detail"].lower()
+
+

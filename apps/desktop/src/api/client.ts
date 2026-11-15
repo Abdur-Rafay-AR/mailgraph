@@ -67,6 +67,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  syncAccount: (accountId: number, limit?: number) =>
+    request<{ status: string; account_id: number; scanned_count: number; inserted_count: number; skipped_count: number; failed_count: number }>(
+      `/accounts/${accountId}/sync${limit ? `?limit=${limit}` : ''}`,
+      { method: 'POST' }
+    ),
 
   // Senders
   getSenders: (params: {

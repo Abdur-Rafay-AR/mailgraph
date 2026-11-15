@@ -9,26 +9,33 @@ export default {
     extend: {
       colors: {
         bg: {
-          deep: '#0c0814',
-          surface: '#140e26',
-          elevated: '#1f1638',
-          highlight: '#2d2050',
+          deep: '#0A0A0A',      // True Deep Black
+          surface: '#141414',   // Matte Carbon Panel
+          elevated: '#1C1C1C',  // Raised Technical Panel
+          highlight: '#262626', // Hover highlight
         },
         border: {
-          subtle: '#261a46',
-          muted: '#3d2b6e',
-          active: '#6d45ba',
+          subtle: '#262626',    // Crisp 1px structural line
+          muted: '#333333',     // Defined component boundary
+          active: '#FF3B30',    // Signal Red active focus
         },
         brand: {
-          DEFAULT: '#9061f9', // violet-500
-          hover: '#7e3af2',   // violet-600
-          light: '#c084fc',   // violet-400
-          accent: '#e879f9',  // fuchsia-400
+          DEFAULT: '#FF3B30',   // Signal Industrial Red
+          hover: '#E02D22',     // Deep Signal Red on hover
+          light: '#FF6961',     // Light Red accent
+          accent: '#FF3B30',    // Focus Red
         },
       },
       fontFamily: {
-        sans: ['Inter', 'Segoe UI', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'monospace'],
+        sans: ['"Space Grotesk"', 'Segoe UI', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'Fira Code', 'Consolas', 'monospace'],
+      },
+      borderRadius: {
+        DEFAULT: '2px',
+        sm: '2px',
+        md: '4px',
+        lg: '6px',
+        xl: '8px',
       },
     },
   },

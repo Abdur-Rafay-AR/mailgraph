@@ -31,10 +31,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable CORS for local desktop UI
+# Enable CORS strictly for local desktop UI (localhost dev server and Electron file:// origin)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["null"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|testserver)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
