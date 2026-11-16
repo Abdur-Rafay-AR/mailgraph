@@ -75,7 +75,7 @@ class SyncManager:
             with db.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT id, provider, display_name, email_address, settings_json FROM accounts WHERE id = ?;",
+                    "SELECT id, provider, display_name, email_address, settings_json, status FROM accounts WHERE id = ?;",
                     (account_id,)
                 )
                 row = cursor.fetchone()
@@ -83,6 +83,12 @@ class SyncManager:
                     with self._lock:
                         self._active_job["status"] = "failed"
                         self._active_job["error_message"] = "Account not found"
+                    return
+
+                if row["status"] == "paused":
+                    with self._lock:
+                        self._active_job["status"] = "failed"
+                        self._active_job["error_message"] = "Cannot sync disabled/paused account"
                     return
 
                 provider_name = row[1]

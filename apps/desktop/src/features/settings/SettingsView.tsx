@@ -14,7 +14,9 @@ import {
   Server,
   Key,
   ExternalLink,
-  Square
+  Square,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { Account, AppSettings, ProtectionRule, SyncJob } from '../../types/api';
@@ -25,12 +27,14 @@ interface SettingsViewProps {
   activeSyncJob?: SyncJob | null;
   onStartSync?: (accountId: number, limit?: number) => Promise<void>;
   onStopSync?: () => Promise<void>;
+  onAccountsChanged?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   activeSyncJob,
   onStartSync,
   onStopSync,
+  onAccountsChanged,
 }) => {
   const [activeTab, setActiveTab] = useState<'accounts' | 'privacy' | 'protection' | 'ai'>('accounts');
 
@@ -159,10 +163,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
       setAddAccountModal(false);
       await fetchData();
+      if (onAccountsChanged) onAccountsChanged();
     } catch (err: any) {
       alert(err.message || 'Failed to initialize account');
     } finally {
       setLoadingCreate(false);
+    }
+  };
+
+  const handleToggleAccountStatus = async (id: number, currentStatus: string) => {
+    const newStatus = currentStatus === 'paused' ? 'active' : 'paused';
+    try {
+      await api.updateAccountStatus(id, newStatus);
+      await fetchData();
+      if (onAccountsChanged) onAccountsChanged();
+    } catch (err: any) {
+      alert(err.message || 'Error updating account status');
     }
   };
 
@@ -196,6 +212,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await api.deleteAccount(id);
       await fetchData();
+      if (onAccountsChanged) onAccountsChanged();
     } catch (err: any) {
       alert(err.message || 'Error deleting account');
     }
@@ -352,6 +369,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           <span className="text-[10px] px-2 py-0.5 rounded-none bg-bg-deep border border-border-subtle uppercase text-slate-300 font-mono">
                             {acc.provider}
                           </span>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-none border uppercase font-mono ${
+                              acc.status === 'paused'
+                                ? 'bg-amber-950/40 border-amber-800/60 text-amber-300'
+                                : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                            }`}
+                          >
+                            {acc.status === 'paused' ? 'Disabled' : 'Active'}
+                          </span>
                         </div>
                         <div className="text-[11px] text-slate-400 mt-1">{acc.email_address}</div>
                         {(acc.provider === 'imap' || acc.provider === 'gmail') && (
@@ -366,6 +392,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
+                        <Button
+                          size="xs"
+                          variant={acc.status === 'paused' ? 'primary' : 'outline'}
+                          disabled={isThisAccountSyncing}
+                          onClick={() => handleToggleAccountStatus(acc.id, acc.status)}
+                          icon={acc.status === 'paused' ? <Eye className="w-3 h-3 text-emerald-300" /> : <EyeOff className="w-3 h-3 text-slate-300" />}
+                          title={acc.status === 'paused' ? 'Re-enable this account' : 'Temporarily disable this account'}
+                        >
+                          {acc.status === 'paused' ? 'Enable' : 'Disable'}
+                        </Button>
+
                         {isThisAccountSyncing && activeSyncJob ? (
                           <Button
                             size="xs"
@@ -382,18 +419,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             <Button
                               size="xs"
                               variant="outline"
+                              disabled={acc.status === 'paused'}
                               onClick={() => handleStartSync(acc.id, 100)}
                               icon={<RefreshCw className="w-3 h-3 text-slate-300" />}
-                              title="Fetch 100 most recent messages"
+                              title={acc.status === 'paused' ? 'Account is disabled. Re-enable to sync.' : 'Fetch 100 most recent messages'}
                             >
                               Sync Recent (100)
                             </Button>
                             <Button
                               size="xs"
                               variant="primary"
+                              disabled={acc.status === 'paused'}
                               onClick={() => handleStartSync(acc.id, 0)}
                               icon={<RefreshCw className="w-3 h-3" />}
-                              title="Ingest all emails in connected inbox"
+                              title={acc.status === 'paused' ? 'Account is disabled. Re-enable to sync.' : 'Ingest all emails in connected inbox'}
                             >
                               Get ALL Emails
                             </Button>

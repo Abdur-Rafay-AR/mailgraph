@@ -6,7 +6,7 @@ import sqlite3
 from typing import List, Dict, Any, Optional
 
 from backend.app.db.database import get_db, get_database
-from backend.app.models.schemas import AccountCreate, AccountResponse, SyntheticGenerateRequest, ImapConnectRequest
+from backend.app.models.schemas import AccountCreate, AccountResponse, AccountStatusUpdate, SyntheticGenerateRequest, ImapConnectRequest
 from backend.app.ingestion.pipeline import IngestionPipeline
 from backend.app.providers.synthetic import SyntheticMailboxGenerator
 from backend.app.providers.mbox import MboxProvider
@@ -47,6 +47,28 @@ def create_account(req: AccountCreate, conn: sqlite3.Connection = Depends(get_db
     """, (req.provider, req.display_name, req.email_address, req.settings_json or "{}"))
     account_id = cursor.lastrowid
     
+    cursor.execute("SELECT id, provider, display_name, email_address, created_at, last_sync_at, status FROM accounts WHERE id = ?;", (account_id,))
+    r = cursor.fetchone()
+    return AccountResponse(
+        id=r["id"],
+        provider=r["provider"],
+        display_name=r["display_name"],
+        email_address=r["email_address"],
+        created_at=r["created_at"],
+        last_sync_at=r["last_sync_at"],
+        status=r["status"]
+    )
+
+@router.patch("/{account_id}/status", response_model=AccountResponse)
+def update_account_status(account_id: int, req: AccountStatusUpdate, conn: sqlite3.Connection = Depends(get_db)):
+    if req.status not in ("active", "paused"):
+        raise HTTPException(status_code=400, detail="Status must be 'active' or 'paused'")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM accounts WHERE id = ?;", (account_id,))
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Account not found")
+    cursor.execute("UPDATE accounts SET status = ? WHERE id = ?;", (req.status, account_id))
+    conn.commit()
     cursor.execute("SELECT id, provider, display_name, email_address, created_at, last_sync_at, status FROM accounts WHERE id = ?;", (account_id,))
     r = cursor.fetchone()
     return AccountResponse(
@@ -203,10 +225,12 @@ def sync_account(account_id: int, limit: Optional[int] = 100):
     db = get_database()
     with db.connect() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, provider, display_name, email_address, settings_json FROM accounts WHERE id = ?;", (account_id,))
+        cursor.execute("SELECT id, provider, display_name, email_address, settings_json, status FROM accounts WHERE id = ?;", (account_id,))
         acc = cursor.fetchone()
         if not acc:
             raise HTTPException(status_code=404, detail="Account not found.")
+        if acc["status"] == "paused":
+            raise HTTPException(status_code=400, detail="Cannot sync a disabled/paused account. Please re-enable it first.")
         provider_name = acc[1]
         email_address = acc[3]
 
@@ -268,6 +292,16 @@ def start_background_sync(account_id: int, limit: Optional[int] = None):
     Launch asynchronous ingestion job in a background worker thread.
     Allows fetching ALL emails without blocking the HTTP server or UI navigation.
     """
+    db = get_database()
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM accounts WHERE id = ?;", (account_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        if row["status"] == "paused":
+            raise HTTPException(status_code=400, detail="Cannot sync a disabled/paused account. Please re-enable it first.")
+
     from backend.app.ingestion.sync_manager import sync_manager
     res = sync_manager.start_sync(account_id, limit=limit)
     return res

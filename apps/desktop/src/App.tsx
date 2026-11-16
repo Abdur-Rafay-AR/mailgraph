@@ -11,13 +11,18 @@ import { AttachmentsView } from './features/attachments/AttachmentsView';
 import { InsightsView } from './features/insights/InsightsView';
 import { SettingsView } from './features/settings/SettingsView';
 import { api } from './api/client';
-import { OverviewStats, QueryAST, SyncJob } from './types/api';
+import { Account, OverviewStats, QueryAST, SyncJob } from './types/api';
 
 export const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<NavView>('overview');
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [backendOnline, setBackendOnline] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  // Global accounts & filtering state
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<number | 'all'>('all');
+  const scopedAccountId = selectedAccountId === 'all' ? undefined : selectedAccountId;
 
   // Cross-view state handoffs
   const [messagesSenderFilter, setMessagesSenderFilter] = useState<string>('');
@@ -26,9 +31,17 @@ export const App: React.FC = () => {
   // Global background ingestion state
   const [activeSyncJob, setActiveSyncJob] = useState<SyncJob | null>(null);
 
-  const fetchGlobalStats = async () => {
+  const fetchAccounts = async () => {
     try {
-      const data = await api.getOverview();
+      const data = await api.getAccounts();
+      setAccounts(data);
+    } catch (_) {}
+  };
+
+  const fetchGlobalStats = async (accId?: number) => {
+    try {
+      const targetId = accId !== undefined ? accId : scopedAccountId;
+      const data = await api.getOverview(targetId);
       setStats(data);
       setBackendOnline(true);
     } catch (err) {
@@ -37,10 +50,13 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchGlobalStats();
-    const interval = setInterval(fetchGlobalStats, 10000);
+    fetchAccounts();
+    fetchGlobalStats(scopedAccountId);
+    const interval = setInterval(() => {
+      fetchGlobalStats(scopedAccountId);
+    }, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedAccountId]);
 
   // Poll background sync telemetry (keeps running regardless of active tab)
   useEffect(() => {
@@ -206,12 +222,16 @@ export const App: React.FC = () => {
           onQuickDemo={stats?.total_messages === 0 ? handleQuickDemo : undefined}
           activeSyncJob={activeSyncJob}
           onStopSync={handleStopSync}
+          accounts={accounts}
+          selectedAccountId={selectedAccountId}
+          onSelectAccount={setSelectedAccountId}
         />
 
         {/* View Router */}
         <main className="flex-1 flex flex-col overflow-hidden relative">
           {currentView === 'overview' && (
             <OverviewView
+              accountId={scopedAccountId}
               onNavigate={setCurrentView}
               onSyncMailbox={handleSyncMailbox}
               isSyncActive={Boolean(
@@ -229,6 +249,7 @@ export const App: React.FC = () => {
 
           {currentView === 'graph' && (
             <GraphView
+              accountId={scopedAccountId}
               onNavigateToMessages={(addr) => {
                 if (addr) setMessagesSenderFilter(addr);
                 setCurrentView('messages');
@@ -242,6 +263,7 @@ export const App: React.FC = () => {
 
           {currentView === 'messages' && (
             <MessagesView
+              accountId={scopedAccountId}
               initialSender={messagesSenderFilter}
               onOpenCleanupWithQuery={(query) => {
                 setCleanupInitialQuery(query);
@@ -252,6 +274,7 @@ export const App: React.FC = () => {
 
           {currentView === 'senders' && (
             <SendersView
+              accountId={scopedAccountId}
               onOpenMessagesWithSender={(addr) => {
                 setMessagesSenderFilter(addr);
                 setCurrentView('messages');
@@ -265,6 +288,7 @@ export const App: React.FC = () => {
 
           {currentView === 'timeline' && (
             <TimelineView
+              accountId={scopedAccountId}
               onOpenSenderMessages={(addr) => {
                 setMessagesSenderFilter(addr);
                 setCurrentView('messages');
@@ -272,7 +296,7 @@ export const App: React.FC = () => {
             />
           )}
 
-          {currentView === 'attachments' && <AttachmentsView />}
+          {currentView === 'attachments' && <AttachmentsView accountId={scopedAccountId} />}
 
           {currentView === 'insights' && (
             <InsightsView
@@ -292,6 +316,10 @@ export const App: React.FC = () => {
               activeSyncJob={activeSyncJob}
               onStartSync={handleStartSync}
               onStopSync={handleStopSync}
+              onAccountsChanged={() => {
+                fetchAccounts();
+                fetchGlobalStats(scopedAccountId);
+              }}
             />
           )}
         </main>

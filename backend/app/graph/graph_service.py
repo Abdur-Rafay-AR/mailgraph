@@ -55,6 +55,8 @@ class GraphService:
             if account_id:
                 where_conditions.append("m.account_id = ?")
                 params.append(account_id)
+            else:
+                where_conditions.append("m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')")
             if category:
                 where_conditions.append("c.name = ?")
                 params.append(category)

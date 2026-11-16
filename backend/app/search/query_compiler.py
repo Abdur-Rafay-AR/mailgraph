@@ -54,6 +54,8 @@ class QueryCompiler:
             placeholders = ", ".join("?" for _ in ast.account_ids)
             where_clauses.append(f"messages.account_id IN ({placeholders})")
             params.extend(ast.account_ids)
+        else:
+            where_clauses.append("messages.account_id IN (SELECT id FROM accounts WHERE status != 'paused')")
             
         # 2. Text Search with SQLite FTS5
         if ast.search_term and ast.search_term.strip():

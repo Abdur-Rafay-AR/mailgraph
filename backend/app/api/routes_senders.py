@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api/senders", tags=["senders"])
 
 @router.get("")
 def list_senders(
+    account_id: Optional[int] = None,
     search: Optional[str] = None,
     domain: Optional[str] = None,
     category: Optional[str] = None,
@@ -57,6 +58,11 @@ def list_senders(
         active_folder_filter = f"(m.folder_id IS NULL OR m.folder_id NOT IN ({','.join(trash_ids)}))"
     else:
         active_folder_filter = "1=1"
+
+    if account_id is not None:
+        active_folder_filter += f" AND m.account_id = {int(account_id)}"
+    else:
+        active_folder_filter += " AND m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
     
     # Total active senders count (only senders with active non-trash messages)
     count_sql = f"""
