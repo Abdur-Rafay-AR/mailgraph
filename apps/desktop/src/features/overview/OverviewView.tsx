@@ -19,6 +19,7 @@ import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 
 interface OverviewViewProps {
+  accountId?: number;
   onNavigate: (view: any) => void;
   onOpenSenderMessages?: (senderAddress: string) => void;
   onSyncMailbox?: () => void;
@@ -26,6 +27,7 @@ interface OverviewViewProps {
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
+  accountId,
   onNavigate,
   onOpenSenderMessages,
   onSyncMailbox,
@@ -38,7 +40,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const data = await api.getOverview();
+      const data = await api.getOverview(accountId);
       setStats(data);
     } catch (err) {
       console.error(err);
@@ -49,7 +51,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
   useEffect(() => {
     fetchStats();
-  }, []);
+  }, [accountId]);
 
   const handleGenerateDemo = async () => {
     setDemoLoading(true);

@@ -307,5 +307,89 @@ def test_background_sync_lifecycle_and_stop():
     final_res = client.get("/api/accounts/sync/active").json()
     assert final_res["job"]["status"] in ("stopped", "completed")
 
+def test_account_status_toggle_and_sync_restriction():
+    """Verify accounts can be paused/disabled and resumed, and paused accounts reject sync."""
+    res = client.post("/api/accounts", json={
+        "provider": "synthetic",
+        "display_name": "Toggle Account",
+        "email_address": "toggle@mailgraph.local"
+    })
+    acc_id = res.json()["id"]
+    assert res.json()["status"] == "active"
+
+    # Pause account
+    patch_res = client.patch(f"/api/accounts/{acc_id}/status", json={"status": "paused"})
+    assert patch_res.status_code == 200
+    assert patch_res.json()["status"] == "paused"
+
+    # Verify listing reflects paused status
+    accs = client.get("/api/accounts").json()
+    acc = next(a for a in accs if a["id"] == acc_id)
+    assert acc["status"] == "paused"
+
+    # Attempting to sync paused account must be rejected with 400
+    sync_res = client.post(f"/api/accounts/{acc_id}/sync")
+    assert sync_res.status_code == 400
+    assert "disabled/paused" in sync_res.json()["detail"]
+
+    start_sync_res = client.post(f"/api/accounts/{acc_id}/sync-start")
+    assert start_sync_res.status_code == 400
+    assert "disabled/paused" in start_sync_res.json()["detail"]
+
+    # Re-enable account
+    resume_res = client.patch(f"/api/accounts/{acc_id}/status", json={"status": "active"})
+    assert resume_res.status_code == 200
+    assert resume_res.json()["status"] == "active"
+
+def test_account_scoping_and_pause_exclusion():
+    """Verify overview and message search filter by account_id and exclude paused accounts by default."""
+    # 1. Generate 10 messages for Account 1
+    res1 = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Account 1",
+        "email_address": "box1@mailgraph.local",
+        "message_count": 10,
+        "seed": 101
+    })
+    acc1_id = res1.json()["account_id"]
+
+    # 2. Generate 10 messages for Account 2
+    res2 = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Account 2",
+        "email_address": "box2@mailgraph.local",
+        "message_count": 10,
+        "seed": 202
+    })
+    acc2_id = res2.json()["account_id"]
+
+    # Global overview should see both (20 messages)
+    ov_all = client.get("/api/overview").json()
+    assert ov_all["total_messages"] == 20
+
+    # Scoped overview for Account 1
+    ov_acc1 = client.get(f"/api/overview?account_id={acc1_id}").json()
+    assert ov_acc1["total_messages"] == 10
+
+    # Search scoped to Account 2
+    search_acc2 = client.post("/api/messages/search", json={
+        "query": {"account_ids": [acc2_id], "exclude_protected": False}
+    }).json()
+    assert search_acc2["total_count"] == 10
+    assert all(item["account_id"] == acc2_id for item in search_acc2["items"])
+
+    # Now pause Account 2
+    client.patch(f"/api/accounts/{acc2_id}/status", json={"status": "paused"})
+
+    # Default overview should now only count active Account 1 (10 messages)
+    ov_after_pause = client.get("/api/overview").json()
+    assert ov_after_pause["total_messages"] == 10
+
+    # Default search should now only return active Account 1 messages
+    search_default = client.post("/api/messages/search", json={
+        "query": {"exclude_protected": False}
+    }).json()
+    assert search_default["total_count"] == 10
+    assert all(item["account_id"] == acc1_id for item in search_default["items"])
+
+
 
 

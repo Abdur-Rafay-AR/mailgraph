@@ -23,6 +23,7 @@ import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 
 interface GraphViewProps {
+  accountId?: number;
   onNavigateToMessages?: (senderAddress?: string) => void;
   onNavigateToCleanup?: (query: QueryAST) => void;
 }
@@ -30,6 +31,7 @@ interface GraphViewProps {
 type LayoutMode = 'galaxy' | 'hierarchy' | 'radial' | 'matrix';
 
 export const GraphView: React.FC<GraphViewProps> = ({
+  accountId,
   onNavigateToMessages,
   onNavigateToCleanup,
 }) => {
@@ -121,6 +123,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     setLoading(true);
     try {
       const data = await api.getGraph({
+        account_id: accountId,
         level,
         selected_domain: selectedDomain || undefined,
         category: categoryFilter || undefined,
@@ -380,7 +383,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
   useEffect(() => {
     fetchAndRenderGraph();
-  }, [level, selectedDomain, categoryFilter, sizeMetric]);
+  }, [level, selectedDomain, categoryFilter, sizeMetric, accountId]);
 
   // Handle Layout Mode switch without re-fetching data
   const handleApplyLayout = (mode: LayoutMode) => {

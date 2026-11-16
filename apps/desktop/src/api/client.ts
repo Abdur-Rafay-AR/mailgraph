@@ -47,12 +47,18 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 export const api = {
   // Health & Overview
   getHealth: () => request<{ status: string; version: string }>('/health'),
-  getOverview: () => request<OverviewStats>('/overview'),
+  getOverview: (accountId?: number) =>
+    request<OverviewStats>(`/overview${accountId !== undefined ? `?account_id=${accountId}` : ''}`),
 
   // Accounts
   getAccounts: () => request<Account[]>('/accounts'),
   createAccount: (data: { provider: string; display_name: string; email_address: string }) =>
     request<Account>('/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  updateAccountStatus: (id: number, status: 'active' | 'paused') =>
+    request<Account>(`/accounts/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
   deleteAccount: (id: number) => request<{ status: string }>(`/accounts/${id}`, { method: 'DELETE' }),
   generateSynthetic: (data: { display_name?: string; email_address?: string; message_count?: number; seed?: number }) =>
     request<{ status: string; account_id: number; inserted_count: number }>('/accounts/synthetic/generate', {
@@ -85,6 +91,7 @@ export const api = {
 
   // Senders
   getSenders: (params: {
+    account_id?: number;
     search?: string;
     domain?: string;
     category?: string;
@@ -95,6 +102,7 @@ export const api = {
     page_size?: number;
   }) => {
     const q = new URLSearchParams();
+    if (params.account_id !== undefined) q.set('account_id', String(params.account_id));
     if (params.search) q.set('search', params.search);
     if (params.domain) q.set('domain', params.domain);
     if (params.category) q.set('category', params.category);
@@ -124,6 +132,7 @@ export const api = {
 
   // Graph
   getGraph: (params: {
+    account_id?: number;
     level?: 'domain' | 'sender' | 'thread';
     selected_domain?: string;
     selected_sender_id?: number;
@@ -132,6 +141,7 @@ export const api = {
     end_date?: string;
   }) => {
     const q = new URLSearchParams();
+    if (params.account_id !== undefined) q.set('account_id', String(params.account_id));
     if (params.level) q.set('level', params.level);
     if (params.selected_domain) q.set('selected_domain', params.selected_domain);
     if (params.selected_sender_id) q.set('selected_sender_id', String(params.selected_sender_id));
@@ -154,18 +164,30 @@ export const api = {
   listOperations: () => request<CleanupOperation[]>('/cleanup/operations'),
 
   // Timeline
-  getTimelineVolume: (groupBy: 'year' | 'month' | 'day' = 'month', limit?: number) =>
-    request<{ period: string; message_count: number; total_bytes: number; unread_count: number }[]>(
-      `/timeline/volume?group_by=${groupBy}${limit ? `&limit=${limit}` : ''}`
+  getTimelineVolume: (groupBy: 'year' | 'month' | 'day' = 'month', limit?: number, accountId?: number) => {
+    const q = new URLSearchParams();
+    q.set('group_by', groupBy);
+    if (limit) q.set('limit', String(limit));
+    if (accountId !== undefined) q.set('account_id', String(accountId));
+    return request<{ period: string; message_count: number; total_bytes: number; unread_count: number }[]>(
+      `/timeline/volume?${q.toString()}`
+    );
+  },
+  getTimelineSenders: (limit = 15, accountId?: number) => {
+    const q = new URLSearchParams();
+    q.set('limit', String(limit));
+    if (accountId !== undefined) q.set('account_id', String(accountId));
+    return request<any[]>(`/timeline/senders?${q.toString()}`);
+  },
+  getTimelineCadence: (accountId?: number) =>
+    request<{ day: string; day_index: number; count: number; bytes: number }[]>(
+      `/timeline/cadence${accountId !== undefined ? `?account_id=${accountId}` : ''}`
     ),
-  getTimelineSenders: (limit = 15) =>
-    request<any[]>(`/timeline/senders?limit=${limit}`),
-  getTimelineCadence: () =>
-    request<{ day: string; day_index: number; count: number; bytes: number }[]>('/timeline/cadence'),
 
   // Attachments
-  getAttachments: (params: { search?: string; mime_type?: string; min_size?: number; page?: number; page_size?: number }) => {
+  getAttachments: (params: { account_id?: number; search?: string; mime_type?: string; min_size?: number; page?: number; page_size?: number }) => {
     const q = new URLSearchParams();
+    if (params.account_id !== undefined) q.set('account_id', String(params.account_id));
     if (params.search) q.set('search', params.search);
     if (params.mime_type) q.set('mime_type', params.mime_type);
     if (params.min_size) q.set('min_size', String(params.min_size));
@@ -173,7 +195,10 @@ export const api = {
     if (params.page_size) q.set('page_size', String(params.page_size));
     return request<{ total_count: number; page: number; page_size: number; items: any[] }>(`/attachments?${q.toString()}`);
   },
-  getDuplicateAttachments: () => request<{ duplicate_groups: DuplicateAttachmentGroup[] }>('/attachments/duplicates'),
+  getDuplicateAttachments: (accountId?: number) =>
+    request<{ duplicate_groups: DuplicateAttachmentGroup[] }>(
+      `/attachments/duplicates${accountId !== undefined ? `?account_id=${accountId}` : ''}`
+    ),
 
   // Insights
   getInsights: () => request<Insight[]>('/insights'),

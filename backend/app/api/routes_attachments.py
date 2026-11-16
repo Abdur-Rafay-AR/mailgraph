@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/attachments", tags=["attachments"])
 
 @router.get("")
 def list_attachments(
+    account_id: Optional[int] = None,
     mime_type: Optional[str] = None,
     min_size: Optional[int] = None,
     search: Optional[str] = None,
@@ -24,6 +25,12 @@ def list_attachments(
     where_clauses = ["1=1"]
     params: List[Any] = []
     
+    if account_id is not None:
+        where_clauses.append("m.account_id = ?")
+        params.append(account_id)
+    else:
+        where_clauses.append("m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')")
+
     if search:
         where_clauses.append("a.filename LIKE ?")
         params.append(f"%{search}%")
@@ -36,7 +43,7 @@ def list_attachments(
         
     where_sql = " AND ".join(where_clauses)
     
-    cursor.execute(f"SELECT COUNT(*) FROM attachments a WHERE {where_sql};", params)
+    cursor.execute(f"SELECT COUNT(*) FROM attachments a JOIN messages m ON a.message_id = m.id WHERE {where_sql};", params)
     total_count = cursor.fetchone()[0]
     
     cursor.execute(f"""
@@ -75,15 +82,25 @@ def list_attachments(
     }
 
 @router.get("/duplicates")
-def get_duplicate_attachments(conn: sqlite3.Connection = Depends(get_db)):
+def get_duplicate_attachments(
+    account_id: Optional[int] = None,
+    conn: sqlite3.Connection = Depends(get_db)
+):
     """Identify duplicate attachment groups based on cryptographic content hash."""
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT content_hash, COUNT(*) as file_count, SUM(size_bytes) as total_wasted_bytes,
-               MIN(filename) as sample_filename, MIN(size_bytes) as single_size
-        FROM attachments
-        WHERE content_hash IS NOT NULL AND is_inline = 0
-        GROUP BY content_hash
+
+    if account_id is not None:
+        acc_filter = f"AND m.account_id = {int(account_id)}"
+    else:
+        acc_filter = "AND m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
+
+    cursor.execute(f"""
+        SELECT a.content_hash, COUNT(*) as file_count, SUM(a.size_bytes) as total_wasted_bytes,
+               MIN(a.filename) as sample_filename, MIN(a.size_bytes) as single_size
+        FROM attachments a
+        JOIN messages m ON a.message_id = m.id
+        WHERE a.content_hash IS NOT NULL AND a.is_inline = 0 {acc_filter}
+        GROUP BY a.content_hash
         HAVING file_count > 1
         ORDER BY total_wasted_bytes DESC;
     """)
@@ -96,11 +113,11 @@ def get_duplicate_attachments(conn: sqlite3.Connection = Depends(get_db)):
         single_size = r[4]
         
         # Fetch matching references
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT a.id, a.message_id, a.filename, m.subject, m.received_at, m.sender_address
             FROM attachments a
             JOIN messages m ON a.message_id = m.id
-            WHERE a.content_hash = ?;
+            WHERE a.content_hash = ? {acc_filter};
         """, (h,))
         refs = [
             {

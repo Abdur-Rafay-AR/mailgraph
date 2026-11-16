@@ -20,12 +20,14 @@ import { Badge } from '../../components/Badge';
 import { MessageDetailModal } from './MessageDetailModal';
 
 interface MessagesViewProps {
+  accountId?: number;
   initialSearch?: string;
   initialSender?: string;
   onOpenCleanupWithQuery?: (ast: QueryAST) => void;
 }
 
 export const MessagesView: React.FC<MessagesViewProps> = ({
+  accountId,
   initialSearch = '',
   initialSender = '',
   onOpenCleanupWithQuery,
@@ -77,6 +79,7 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
 
       const ast: QueryAST = {
         version: 1,
+        account_ids: accountId !== undefined ? [accountId] : undefined,
         search_term: searchTerm.trim() || undefined,
         all: allConditions,
         exclude_protected: excludeProtected,
@@ -101,7 +104,7 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
 
   useEffect(() => {
     fetchMessages();
-  }, [searchTerm, selectedCategory, unreadOnly, hasAttachmentsOnly, starredOnly, excludeProtected, senderFilter, sortBy, sortDir, page]);
+  }, [searchTerm, selectedCategory, unreadOnly, hasAttachmentsOnly, starredOnly, excludeProtected, senderFilter, sortBy, sortDir, page, accountId]);
 
   // Handle Export CSV
   const handleExportCsv = async () => {

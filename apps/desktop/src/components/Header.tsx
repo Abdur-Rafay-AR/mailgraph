@@ -1,7 +1,7 @@
 import React from 'react';
-import { RefreshCw, Database, Square } from 'lucide-react';
+import { RefreshCw, Database, Square, Mail } from 'lucide-react';
 import { Button } from './Button';
-import { SyncJob } from '../types/api';
+import { Account, SyncJob } from '../types/api';
 
 interface HeaderProps {
   title: string;
@@ -13,6 +13,9 @@ interface HeaderProps {
   backendOnline?: boolean;
   activeSyncJob?: SyncJob | null;
   onStopSync?: () => void;
+  accounts?: Account[];
+  selectedAccountId?: number | 'all';
+  onSelectAccount?: (id: number | 'all') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -25,6 +28,9 @@ export const Header: React.FC<HeaderProps> = ({
   backendOnline = true,
   activeSyncJob,
   onStopSync,
+  accounts = [],
+  selectedAccountId = 'all',
+  onSelectAccount,
 }) => {
   const isSyncActive = Boolean(
     activeSyncJob &&
@@ -48,6 +54,29 @@ export const Header: React.FC<HeaderProps> = ({
           </h1>
           {subtitle && <p className="text-xs text-slate-400 font-mono mt-0.5">{subtitle}</p>}
         </div>
+
+        {/* Global Account Switcher */}
+        {accounts.length > 0 && onSelectAccount && (
+          <div className="flex items-center gap-2 pl-4 border-l border-border-subtle">
+            <Mail className="w-3.5 h-3.5 text-slate-400" />
+            <select
+              value={selectedAccountId}
+              onChange={(e) => {
+                const val = e.target.value;
+                onSelectAccount(val === 'all' ? 'all' : Number(val));
+              }}
+              className="bg-bg-deep border border-border-subtle text-slate-200 text-xs px-2.5 py-1 rounded-none font-mono focus:outline-none focus:border-brand cursor-pointer hover:border-border-muted transition-colors"
+              title="Scope all views to a specific account"
+            >
+              <option value="all">All Accounts ({accounts.filter((a) => a.status !== 'paused').length} Active)</option>
+              {accounts.map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.display_name} ({acc.email_address}){acc.status === 'paused' ? ' [Disabled]' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

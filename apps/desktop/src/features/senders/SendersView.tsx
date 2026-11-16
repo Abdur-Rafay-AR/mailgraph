@@ -21,11 +21,13 @@ import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 
 interface SendersViewProps {
+  accountId?: number;
   onOpenCleanupWithSenders?: (senderAddresses: string[], op: 'trash' | 'archive') => void;
   onOpenMessagesWithSender?: (senderAddress: string) => void;
 }
 
 export const SendersView: React.FC<SendersViewProps> = ({
+  accountId,
   onOpenCleanupWithSenders,
   onOpenMessagesWithSender,
 }) => {
@@ -55,6 +57,7 @@ export const SendersView: React.FC<SendersViewProps> = ({
     setLoading(true);
     try {
       const res = await api.getSenders({
+        account_id: accountId,
         search,
         sort_by: sortBy,
         sort_dir: sortDir,
@@ -72,7 +75,7 @@ export const SendersView: React.FC<SendersViewProps> = ({
 
   useEffect(() => {
     fetchSenders();
-  }, [search, sortBy, sortDir]);
+  }, [search, sortBy, sortDir, accountId]);
 
   // Load individual sender detail
   const handleOpenDetail = async (senderId: number) => {

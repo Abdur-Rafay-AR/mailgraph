@@ -5,7 +5,11 @@ import { DuplicateAttachmentGroup } from '../../types/api';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 
-export const AttachmentsView: React.FC = () => {
+interface AttachmentsViewProps {
+  accountId?: number;
+}
+
+export const AttachmentsView: React.FC<AttachmentsViewProps> = ({ accountId }) => {
   const [activeTab, setActiveTab] = useState<'all' | 'duplicates'>('duplicates');
   const [attachments, setAttachments] = useState<any[]>([]);
   const [duplicates, setDuplicates] = useState<DuplicateAttachmentGroup[]>([]);
@@ -17,10 +21,11 @@ export const AttachmentsView: React.FC = () => {
     setLoading(true);
     try {
       if (activeTab === 'duplicates') {
-        const res = await api.getDuplicateAttachments();
+        const res = await api.getDuplicateAttachments(accountId);
         setDuplicates(res.duplicate_groups);
       } else {
         const res = await api.getAttachments({
+          account_id: accountId,
           search: search || undefined,
           mime_type: mimeFilter || undefined,
           page: 1,
@@ -37,7 +42,7 @@ export const AttachmentsView: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, [activeTab, search, mimeFilter]);
+  }, [activeTab, search, mimeFilter, accountId]);
 
   const totalWastedBytes = duplicates.reduce(
     (acc, d) => acc + d.file_size * (d.duplicate_count - 1),

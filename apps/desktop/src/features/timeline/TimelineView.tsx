@@ -17,10 +17,11 @@ import { api } from '../../api/client';
 import { Button } from '../../components/Button';
 
 interface TimelineViewProps {
+  accountId?: number;
   onOpenSenderMessages?: (senderAddress: string) => void;
 }
 
-export const TimelineView: React.FC<TimelineViewProps> = ({ onOpenSenderMessages }) => {
+export const TimelineView: React.FC<TimelineViewProps> = ({ accountId, onOpenSenderMessages }) => {
   const [groupBy, setGroupBy] = useState<'year' | 'month' | 'day'>('month');
   const [metricMode, setMetricMode] = useState<'volume' | 'storage'>('volume');
   const [volumeData, setVolumeData] = useState<any[]>([]);
@@ -32,9 +33,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ onOpenSenderMessages
     setLoading(true);
     try {
       const [vol, senders, cadence] = await Promise.all([
-        api.getTimelineVolume(groupBy, groupBy === 'day' ? 30 : undefined),
-        api.getTimelineSenders(15),
-        api.getTimelineCadence(),
+        api.getTimelineVolume(groupBy, groupBy === 'day' ? 30 : undefined, accountId),
+        api.getTimelineSenders(15, accountId),
+        api.getTimelineCadence(accountId),
       ]);
       setVolumeData(vol || []);
       setSenderTimeline(senders || []);
@@ -48,7 +49,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ onOpenSenderMessages
 
   useEffect(() => {
     fetchTimelineData();
-  }, [groupBy]);
+  }, [groupBy, accountId]);
 
   // Derived KPI metrics
   const totalVolume = useMemo(() => {

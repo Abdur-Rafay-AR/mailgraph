@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from backend.app.config import settings
 from backend.app.db.database import get_database, get_db
@@ -61,43 +61,54 @@ def health_check():
     return {"status": "ok", "version": settings.app_version, "app": settings.app_name}
 
 @app.get("/api/overview")
-def get_overview(conn: sqlite3.Connection = Depends(get_db)):
+def get_overview(account_id: Optional[int] = None, conn: sqlite3.Connection = Depends(get_db)):
     """Mailbox overview statistics: counts, date coverage, storage, and top senders."""
     cursor = conn.cursor()
     
+    if account_id is not None:
+        acc_filter = f"AND m.account_id = {int(account_id)}"
+    else:
+        acc_filter = "AND m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
+
     # Message count, unread, storage for active mailbox (excluding trash/spam)
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT 
-            COUNT(id) as total_messages,
-            COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread_messages,
-            COALESCE(SUM(size_bytes), 0) as total_bytes,
-            MIN(received_at) as earliest_date,
-            MAX(received_at) as latest_date
-        FROM messages
-        WHERE folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'));
+            COUNT(m.id) as total_messages,
+            COALESCE(SUM(CASE WHEN m.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_messages,
+            COALESCE(SUM(m.size_bytes), 0) as total_bytes,
+            MIN(m.received_at) as earliest_date,
+            MAX(m.received_at) as latest_date
+        FROM messages m
+        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        {acc_filter};
     """)
     m_stats = cursor.fetchone()
     
     # Active Senders & domains count
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT COUNT(DISTINCT s.id) as total_senders, COUNT(DISTINCT s.domain) as total_domains 
         FROM senders s
         JOIN messages m ON s.id = m.sender_id
-        WHERE m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'));
+        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        {acc_filter};
     """)
     s_stats = cursor.fetchone()
     
     # Accounts count
-    cursor.execute("SELECT COUNT(id) FROM accounts;")
-    acc_count = cursor.fetchone()[0]
+    if account_id is not None:
+        acc_count = 1
+    else:
+        cursor.execute("SELECT COUNT(id) FROM accounts WHERE status != 'paused';")
+        acc_count = cursor.fetchone()[0]
     
     # Top 5 senders by active message count
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT s.id, s.normalized_address, s.display_name, s.domain,
                COUNT(m.id) as count, COALESCE(SUM(m.size_bytes), 0) as bytes
         FROM senders s
         JOIN messages m ON s.id = m.sender_id
-        WHERE m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'))
+        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        {acc_filter}
         GROUP BY s.id
         HAVING count > 0
         ORDER BY count DESC
@@ -109,12 +120,13 @@ def get_overview(conn: sqlite3.Connection = Depends(get_db)):
     ]
     
     # Category counts for active messages
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT c.name, c.color, COUNT(mc.message_id) as count
         FROM categories c
         JOIN message_categories mc ON c.id = mc.category_id
         JOIN messages m ON mc.message_id = m.id
-        WHERE m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam'))
+        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        {acc_filter}
         GROUP BY c.id
         HAVING count > 0
         ORDER BY count DESC;
@@ -125,11 +137,19 @@ def get_overview(conn: sqlite3.Connection = Depends(get_db)):
     ]
     
     # Recent scan status
-    cursor.execute("""
-        SELECT id, account_id, status, started_at, completed_at, inserted_count, failed_count
-        FROM sync_runs
-        ORDER BY id DESC LIMIT 1;
-    """)
+    if account_id is not None:
+        cursor.execute("""
+            SELECT id, account_id, status, started_at, completed_at, inserted_count, failed_count
+            FROM sync_runs
+            WHERE account_id = ?
+            ORDER BY id DESC LIMIT 1;
+        """, (account_id,))
+    else:
+        cursor.execute("""
+            SELECT id, account_id, status, started_at, completed_at, inserted_count, failed_count
+            FROM sync_runs
+            ORDER BY id DESC LIMIT 1;
+        """)
     last_sync = cursor.fetchone()
     sync_status = {
         "status": last_sync[2] if last_sync else "idle",

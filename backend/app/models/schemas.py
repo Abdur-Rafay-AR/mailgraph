@@ -18,6 +18,10 @@ class AccountResponse(BaseModel):
     last_sync_at: Optional[str] = None
     status: str
 
+class AccountStatusUpdate(BaseModel):
+    status: str  # 'active', 'paused'
+
+
 class SyntheticGenerateRequest(BaseModel):
     display_name: str = "Demo Mailbox"
     email_address: str = "demo@mailgraph.local"

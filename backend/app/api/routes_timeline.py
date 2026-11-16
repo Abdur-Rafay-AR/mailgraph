@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/timeline", tags=["timeline"])
 
 @router.get("/volume")
 def get_volume_timeline(
+    account_id: Optional[int] = None,
     group_by: str = Query("month", pattern="^(year|month|day)$"),
     limit: Optional[int] = None,
     conn: sqlite3.Connection = Depends(get_db)
@@ -22,6 +23,11 @@ def get_volume_timeline(
         fmt = "%Y"
     elif group_by == "day":
         fmt = "%Y-%m-%d"
+
+    if account_id is not None:
+        acc_filter = f"AND account_id = {int(account_id)}"
+    else:
+        acc_filter = "AND account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
         
     order_clause = "DESC" if limit else "ASC"
     query = f"""
@@ -31,7 +37,7 @@ def get_volume_timeline(
             COALESCE(SUM(size_bytes), 0) as total_bytes,
             COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread_count
         FROM messages
-        WHERE received_at IS NOT NULL
+        WHERE received_at IS NOT NULL {acc_filter}
         GROUP BY period
         ORDER BY period {order_clause}
     """
@@ -55,10 +61,20 @@ def get_volume_timeline(
     ]
 
 @router.get("/senders")
-def get_sender_timeline(limit: int = 15, conn: sqlite3.Connection = Depends(get_db)):
+def get_sender_timeline(
+    account_id: Optional[int] = None,
+    limit: int = 15,
+    conn: sqlite3.Connection = Depends(get_db)
+):
     """Analyze high-volume sender lifecycles: first observed, peak, and most recent."""
     cursor = conn.cursor()
-    cursor.execute("""
+
+    if account_id is not None:
+        acc_filter = f"WHERE m.account_id = {int(account_id)}"
+    else:
+        acc_filter = "WHERE m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
+
+    cursor.execute(f"""
         SELECT 
             s.id,
             s.normalized_address,
@@ -70,6 +86,7 @@ def get_sender_timeline(limit: int = 15, conn: sqlite3.Connection = Depends(get_
             COALESCE(SUM(m.size_bytes), 0) as total_bytes
         FROM senders s
         JOIN messages m ON s.id = m.sender_id
+        {acc_filter}
         GROUP BY s.id
         ORDER BY message_count DESC
         LIMIT ?;
@@ -91,16 +108,25 @@ def get_sender_timeline(limit: int = 15, conn: sqlite3.Connection = Depends(get_
     ]
 
 @router.get("/cadence")
-def get_timeline_cadence(conn: sqlite3.Connection = Depends(get_db)):
+def get_timeline_cadence(
+    account_id: Optional[int] = None,
+    conn: sqlite3.Connection = Depends(get_db)
+):
     """Calculate day-of-week volume distribution (Monday to Sunday)."""
     cursor = conn.cursor()
-    cursor.execute("""
+
+    if account_id is not None:
+        acc_filter = f"AND account_id = {int(account_id)}"
+    else:
+        acc_filter = "AND account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
+
+    cursor.execute(f"""
         SELECT 
             strftime('%w', received_at) as dow,
             COUNT(*) as message_count,
             COALESCE(SUM(size_bytes), 0) as total_bytes
         FROM messages
-        WHERE received_at IS NOT NULL
+        WHERE received_at IS NOT NULL {acc_filter}
         GROUP BY dow
         ORDER BY dow ASC;
     """)
