@@ -149,7 +149,7 @@ export const App: React.FC = () => {
         setCurrentView('settings');
         return;
       }
-      await handleStartSync(targetAcc.id, 0);
+      await handleStartSync(targetAcc.id, 100);
     } catch (err: any) {
       setGlobalError(err.message || 'Failed to start mailbox sync');
     }
