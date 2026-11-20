@@ -35,7 +35,10 @@ def calculate_cleanup_preview(req: CleanupPreviewRequest):
         exclude_protected=req.query.exclude_protected
     )
     
-    preview = engine.calculate_preview(account_id, req.operation_type, ast)
+    try:
+        preview = engine.calculate_preview(account_id, req.operation_type, ast, label_name=req.label_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "operation_type": preview.operation_type,
         "account_id": preview.account_id,
@@ -74,7 +77,10 @@ def execute_cleanup(req: CleanupExecuteRequest):
         exclude_protected=req.query.exclude_protected
     )
     
-    op_id = engine.execute_action(account_id, req.operation_type, ast)
+    try:
+        op_id = engine.execute_action(account_id, req.operation_type, ast, label_name=req.label_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     with db.connect() as conn:
         cursor = conn.cursor()
