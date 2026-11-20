@@ -21,18 +21,25 @@ export const MessageDetailModal: React.FC<MessageDetailModalProps> = ({
 }) => {
   const [detail, setDetail] = useState<MessageDetail | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showRawText, setShowRawText] = useState<boolean>(false);
 
   useEffect(() => {
     if (messageId) {
       setLoading(true);
+      setLoadError(null);
+      setShowRawText(false);
       api
         .getMessageDetail(messageId)
         .then((res) => setDetail(res))
-        .catch((err) => console.error(err))
+        .catch((err: any) => {
+          console.error(err);
+          setLoadError(err.message || 'Failed to load message details.');
+        })
         .finally(() => setLoading(false));
     } else {
       setDetail(null);
+      setLoadError(null);
     }
   }, [messageId]);
 
@@ -42,13 +49,18 @@ export const MessageDetailModal: React.FC<MessageDetailModalProps> = ({
     <Modal
       isOpen={messageId !== null}
       onClose={onClose}
-      title={detail ? detail.subject : 'Loading Message...'}
+      title={detail ? detail.subject : loadError ? 'Error Loading Message' : 'Loading Message...'}
       subtitle={detail ? `Received ${detail.received_at}` : ''}
       maxWidth="4xl"
     >
-      {loading || !detail ? (
+      {loading ? (
         <div className="py-12 text-center text-slate-400 font-sans text-xs">
           Loading email details and attachments...
+        </div>
+      ) : loadError || !detail ? (
+        <div className="py-10 text-center space-y-3">
+          <div className="text-xs font-mono text-red-400">{loadError || 'Message details unavailable.'}</div>
+          <Button size="sm" variant="ghost" onClick={onClose}>Close</Button>
         </div>
       ) : (
         <div className="space-y-4">
@@ -104,7 +116,21 @@ export const MessageDetailModal: React.FC<MessageDetailModalProps> = ({
                         {(att.size_bytes / 1024).toFixed(0)} KB • {att.mime_type}
                       </div>
                     </div>
-                    <Button size="xs" variant="ghost" title="Save attachment">
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      disabled={!att.content_available}
+                      title={
+                        att.content_available
+                          ? 'Download attachment'
+                          : 'Metadata only — attachment bytes are not stored locally'
+                      }
+                      onClick={() => {
+                        if (att.content_available) {
+                          window.open(api.getAttachmentDownloadUrl(att.id), '_blank');
+                        }
+                      }}
+                    >
                       <Download className="w-3.5 h-3.5 text-slate-400" />
                     </Button>
                   </div>

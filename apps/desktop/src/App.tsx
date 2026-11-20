@@ -27,6 +27,7 @@ export const App: React.FC = () => {
   // Cross-view state handoffs
   const [messagesSenderFilter, setMessagesSenderFilter] = useState<string>('');
   const [cleanupInitialQuery, setCleanupInitialQuery] = useState<QueryAST | undefined>(undefined);
+  const [globalError, setGlobalError] = useState<string | null>(null);
 
   // Global background ingestion state
   const [activeSyncJob, setActiveSyncJob] = useState<SyncJob | null>(null);
@@ -35,6 +36,9 @@ export const App: React.FC = () => {
     try {
       const data = await api.getAccounts();
       setAccounts(data);
+      setSelectedAccountId((prev) =>
+        prev === 'all' || data.some((a) => a.id === prev) ? prev : 'all'
+      );
     } catch (_) {}
   };
 
@@ -70,8 +74,8 @@ export const App: React.FC = () => {
         } else {
           setActiveSyncJob((prev) => {
             if (prev && (prev.status === 'running' || prev.status === 'stopping')) {
-              // Sync just finished or stopped: refresh global stats
               fetchGlobalStats();
+              fetchAccounts();
             }
             return res.job || null;
           });
@@ -89,10 +93,11 @@ export const App: React.FC = () => {
 
   const handleStartSync = async (accountId: number, limit?: number) => {
     try {
+      setGlobalError(null);
       const res = await api.startBackgroundSync(accountId, limit);
       setActiveSyncJob(res.job);
     } catch (err: any) {
-      alert(err.message || 'Failed to start ingestion sync');
+      setGlobalError(err.message || 'Failed to start ingestion sync');
     }
   };
 
@@ -101,38 +106,48 @@ export const App: React.FC = () => {
       await api.stopActiveSync();
       setActiveSyncJob((prev) => (prev ? { ...prev, status: 'stopping' } : null));
     } catch (err: any) {
-      alert(err.message || 'Failed to stop ingestion sync');
+      setGlobalError(err.message || 'Failed to stop ingestion sync');
     }
   };
 
   const handleSyncMailbox = async () => {
     try {
-      const accounts = await api.getAccounts();
-      if (!accounts || accounts.length === 0) {
-        alert('No mailbox accounts connected yet. Please connect an account in Settings first.');
+      setGlobalError(null);
+      const accs = await api.getAccounts();
+      setAccounts(accs);
+      if (!accs || accs.length === 0) {
+        setGlobalError('No mailbox accounts connected yet. Connect an account in Settings first.');
         setCurrentView('settings');
         return;
       }
-      const targetAcc = accounts.find((a) => a.provider === 'imap' || a.provider === 'gmail') || accounts[0];
+      const activeAccs = accs.filter((a) => a.status !== 'paused');
+      const scoped = scopedAccountId ? activeAccs.find((a) => a.id === scopedAccountId) : undefined;
+      const targetAcc = scoped || activeAccs.find((a) => a.provider === 'imap' || a.provider === 'gmail') || activeAccs[0];
+      if (!targetAcc) {
+        setGlobalError('All connected accounts are currently paused. Re-enable an account in Settings.');
+        setCurrentView('settings');
+        return;
+      }
       await handleStartSync(targetAcc.id, 100);
     } catch (err: any) {
-      alert(err.message || 'Failed to start mailbox sync');
+      setGlobalError(err.message || 'Failed to start mailbox sync');
     }
   };
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchGlobalStats();
+    await Promise.all([fetchAccounts(), fetchGlobalStats()]);
     setRefreshing(false);
   };
 
   const handleQuickDemo = async () => {
     try {
+      setGlobalError(null);
       await api.generateSynthetic({ message_count: 75 });
-      await fetchGlobalStats();
+      await Promise.all([fetchAccounts(), fetchGlobalStats()]);
       setCurrentView('overview');
     } catch (err: any) {
-      alert(err.message || 'Error generating demo data');
+      setGlobalError(err.message || 'Error generating demo data');
     }
   };
 
@@ -229,11 +244,28 @@ export const App: React.FC = () => {
 
         {/* View Router */}
         <main className="flex-1 flex flex-col overflow-hidden relative">
+          {globalError && (
+            <div className="px-4 py-2 bg-red-950/80 border-b border-red-700 text-red-200 text-xs font-mono flex items-center justify-between shrink-0 z-30">
+              <span>{globalError}</span>
+              <button
+                onClick={() => setGlobalError(null)}
+                className="text-red-300 hover:text-white px-2 font-bold"
+                aria-label="Dismiss error"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
           {currentView === 'overview' && (
             <OverviewView
               accountId={scopedAccountId}
+              accounts={accounts}
               onNavigate={setCurrentView}
               onSyncMailbox={handleSyncMailbox}
+              onDemoGenerated={async () => {
+                await Promise.all([fetchAccounts(), fetchGlobalStats()]);
+              }}
               isSyncActive={Boolean(
                 activeSyncJob &&
                   (activeSyncJob.status === 'running' ||
@@ -265,6 +297,7 @@ export const App: React.FC = () => {
             <MessagesView
               accountId={scopedAccountId}
               initialSender={messagesSenderFilter}
+              onClearSenderFilter={() => setMessagesSenderFilter('')}
               onOpenCleanupWithQuery={(query) => {
                 setCleanupInitialQuery(query);
                 setCurrentView('cleanup');
@@ -283,7 +316,12 @@ export const App: React.FC = () => {
           )}
 
           {currentView === 'cleanup' && (
-            <CleanupStudio initialQuery={cleanupInitialQuery} />
+            <CleanupStudio
+              accountId={scopedAccountId}
+              initialQuery={cleanupInitialQuery}
+              onClearInitialQuery={() => setCleanupInitialQuery(undefined)}
+              onOperationsChanged={() => fetchGlobalStats(scopedAccountId)}
+            />
           )}
 
           {currentView === 'timeline' && (
@@ -300,10 +338,12 @@ export const App: React.FC = () => {
 
           {currentView === 'insights' && (
             <InsightsView
+              accountId={scopedAccountId}
               onOpenMessages={(addr) => {
                 if (addr) setMessagesSenderFilter(addr);
                 setCurrentView('messages');
               }}
+              onOpenAttachments={() => setCurrentView('attachments')}
               onOpenCleanup={(query) => {
                 setCleanupInitialQuery(query);
                 setCurrentView('cleanup');

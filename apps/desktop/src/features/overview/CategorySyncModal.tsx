@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../api/client';
 import {
+  Account,
   CategorySyncPreview,
   CategorySyncExecuteResponse,
   CategorySyncUndoResponse,
@@ -24,6 +25,7 @@ export interface CategorySyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   accountId?: number;
+  accounts?: Account[];
   onSyncSuccess?: () => void;
 }
 
@@ -31,9 +33,22 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
   isOpen,
   onClose,
   accountId,
+  accounts = [],
   onSyncSuccess,
 }) => {
-  const effectiveAccountId = accountId || 1;
+  const activeAccounts = useMemo(
+    () => accounts.filter((a) => a.status !== 'paused'),
+    [accounts]
+  );
+
+  const defaultAccountId = useMemo(() => {
+    if (accountId !== undefined) return accountId;
+    const preferred = activeAccounts.find((a) => a.provider === 'gmail' || a.provider === 'imap');
+    return preferred?.id ?? activeAccounts[0]?.id;
+  }, [accountId, activeAccounts]);
+
+  const [selectedAccountId, setSelectedAccountId] = useState<number | undefined>(defaultAccountId);
+  const effectiveAccountId = accountId ?? selectedAccountId ?? defaultAccountId;
 
   // Preview state
   const [preview, setPreview] = useState<CategorySyncPreview | null>(null);
@@ -55,7 +70,14 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
   const [undoResult, setUndoResult] = useState<CategorySyncUndoResponse | null>(null);
   const [undoError, setUndoError] = useState<string | null>(null);
 
-  const loadPreview = async () => {
+  const loadPreview = async (targetAccountId?: number) => {
+    const accToUse = targetAccountId ?? effectiveAccountId;
+    if (!accToUse) {
+      setPreview(null);
+      setLoadingPreview(false);
+      setPreviewError('No active account found. Connect or enable an account in Settings first.');
+      return;
+    }
     setLoadingPreview(true);
     setPreviewError(null);
     setSyncResult(null);
@@ -64,7 +86,7 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
     setUndoError(null);
 
     try {
-      const data = await api.previewCategorySync(effectiveAccountId);
+      const data = await api.previewCategorySync(accToUse);
       setPreview(data);
       setSelectedCategories(data.categories.map((c) => c.category));
     } catch (err: any) {
@@ -77,7 +99,9 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      loadPreview();
+      const initialAcc = accountId ?? defaultAccountId;
+      setSelectedAccountId(initialAcc);
+      loadPreview(initialAcc);
     } else {
       setSyncResult(null);
       setUndoResult(null);
@@ -86,7 +110,7 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
       setSyncing(false);
       setUndoing(false);
     }
-  }, [isOpen, accountId]);
+  }, [isOpen, accountId, defaultAccountId]);
 
   const toggleCategory = (category: string) => {
     if (syncing) return;
@@ -130,6 +154,11 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
     }, 1100);
 
     try {
+      if (!effectiveAccountId) {
+        setSyncError('No active account selected.');
+        setSyncing(false);
+        return;
+      }
       const res = await api.executeCategorySync(effectiveAccountId, selectedCategories);
       clearTimeout(timer1);
       clearTimeout(timer2);
@@ -153,6 +182,7 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
     setUndoError(null);
 
     try {
+      if (!effectiveAccountId) return;
       const res = await api.undoCategorySync(effectiveAccountId, syncResult.batch_id);
       setUndoResult(res);
       onSyncSuccess?.();
@@ -180,6 +210,29 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
       maxWidth="2xl"
     >
       <div className="space-y-5">
+        {/* Account Picker when scoped to All Accounts and multiple active accounts exist */}
+        {accountId === undefined && activeAccounts.length > 1 && !syncResult && (
+          <div className="flex items-center justify-between gap-3 p-3 bg-bg-deep border border-border-subtle text-xs font-mono">
+            <span className="text-slate-400">Target Account:</span>
+            <select
+              value={effectiveAccountId ?? ''}
+              disabled={syncing || loadingPreview}
+              onChange={(e) => {
+                const nextId = Number(e.target.value);
+                setSelectedAccountId(nextId);
+                loadPreview(nextId);
+              }}
+              className="bg-bg-surface border border-border-muted px-2.5 py-1 text-slate-200 focus:outline-none focus:border-brand"
+            >
+              {activeAccounts.map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.display_name} ({acc.email_address})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Loading Preview State */}
         {loadingPreview && (
           <div className="py-14 flex flex-col items-center justify-center text-slate-400 font-mono text-xs space-y-3">
@@ -199,7 +252,7 @@ export const CategorySyncModal: React.FC<CategorySyncModalProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-2 pt-1 font-mono">
-              <Button size="sm" variant="outline" onClick={loadPreview} icon={<RefreshCw className="w-3 h-3" />}>
+              <Button size="sm" variant="outline" onClick={() => loadPreview()} icon={<RefreshCw className="w-3 h-3" />}>
                 Retry
               </Button>
               <Button size="sm" variant="ghost" onClick={onClose}>

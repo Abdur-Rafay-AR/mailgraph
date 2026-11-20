@@ -8,7 +8,7 @@ from email import policy
 from email.utils import parseaddr, getaddresses, parsedate_to_datetime
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 @dataclass
 class AddressInfo:

@@ -28,6 +28,7 @@ interface MessagesViewProps {
   accountId?: number;
   initialSearch?: string;
   initialSender?: string;
+  onClearSenderFilter?: () => void;
   onOpenCleanupWithQuery?: (ast: QueryAST) => void;
 }
 
@@ -35,6 +36,7 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
   accountId,
   initialSearch = '',
   initialSender = '',
+  onClearSenderFilter,
   onOpenCleanupWithQuery,
 }) => {
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -49,6 +51,12 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
   const [starredOnly, setStarredOnly] = useState<boolean>(false);
   const [excludeProtected, setExcludeProtected] = useState<boolean>(true);
   const [senderFilter, setSenderFilter] = useState<string>(initialSender);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSenderFilter(initialSender);
+    setPage(1);
+  }, [initialSender]);
   
   // Sorting & Pagination
   const [sortBy, setSortBy] = useState<string>('received_at');
@@ -155,13 +163,14 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
       setSelectedIds(new Set());
       await fetchMessages();
     } catch (err: any) {
-      alert(err.message || 'Error executing undo');
+      setActionError(err.message || 'Error executing undo');
       setTagToast((prev) => (prev ? { ...prev, undoing: false } : null));
     }
   };
 
   const fetchMessages = async () => {
     setLoading(true);
+    setActionError(null);
     try {
       const ast = getCurrentSearchQuery();
 
@@ -175,8 +184,9 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
 
       setMessages(res.items);
       setTotalCount(res.total_count);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setActionError(err.message || 'Failed to search messages');
     } finally {
       setLoading(false);
     }
@@ -186,24 +196,20 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
     fetchMessages();
   }, [searchTerm, selectedCategory, unreadOnly, hasAttachmentsOnly, starredOnly, excludeProtected, senderFilter, sortBy, sortDir, page, accountId]);
 
-  // Handle Export CSV
+  // Handle Export CSV using the exact active search query
   const handleExportCsv = async () => {
     try {
-      const allConditions: QueryCondition[] = [];
-      if (selectedCategory) allConditions.push({ field: 'category', op: 'eq', value: selectedCategory });
-      if (senderFilter) allConditions.push({ field: 'sender_address', op: 'eq', value: senderFilter });
-      
+      setActionError(null);
       const res = await fetch(api.exportCsvUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: {
-            all: allConditions,
-            search_term: searchTerm.trim() || undefined,
-            exclude_protected: excludeProtected,
-          },
+          query: getCurrentSearchQuery(),
         }),
       });
+      if (!res.ok) {
+        throw new Error(`Export failed (${res.status})`);
+      }
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -211,8 +217,9 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
       a.download = 'mailgraph_export.csv';
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setActionError(err.message || 'Failed to export CSV');
     }
   };
 
@@ -284,7 +291,17 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
             {senderFilter && (
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-brand/15 border border-brand/30 text-brand-light font-mono text-xs">
                 Sender: {senderFilter}
-                <button onClick={() => setSenderFilter('')} className="hover:text-white font-bold">×</button>
+                <button
+                  onClick={() => {
+                    setSenderFilter('');
+                    setPage(1);
+                    onClearSenderFilter?.();
+                  }}
+                  className="hover:text-white font-bold"
+                  aria-label="Clear sender filter"
+                >
+                  ×
+                </button>
               </span>
             )}
 
@@ -393,6 +410,16 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Error Banner */}
+      {actionError && (
+        <div className="px-4 py-2 bg-red-950/70 border-b border-red-700 text-red-200 text-xs font-mono flex items-center justify-between">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="text-red-300 hover:text-white font-bold px-2">
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Success / Undo Toast Banner */}
       {tagToast && (

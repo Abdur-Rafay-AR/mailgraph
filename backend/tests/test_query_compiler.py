@@ -48,3 +48,17 @@ def test_compile_fts_match():
     assert "messages_fts" in sql
     assert "MATCH ?" in sql
     assert '"Quarterly Roadmap"*' in params or 'Quarterly Roadmap' in params
+
+
+def test_compile_id_filter_and_wildcard_search():
+    compiler = QueryCompiler()
+    ast = QueryAST(
+        account_ids=[1],
+        all=[QueryCondition(field="id", op="in", value=[10, 20, 30])],
+        search_term='***""^',
+    )
+    sql, params = compiler.compile_sql(ast)
+    assert "messages.id IN (?, ?, ?)" in sql
+    assert [1, 10, 20, 30] == params
+    # Pure wildcard/special characters must be skipped so FTS5 never gets ""*
+    assert "messages_fts" not in sql

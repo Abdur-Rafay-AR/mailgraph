@@ -1,51 +1,97 @@
-"""OS Keyring credential storage abstraction with dual-layer fallback."""
+"""OS Keyring credential storage abstraction with encrypted local fallback."""
 
-import os
-import sys
 import json
 import logging
-import subprocess
+import os
 import re
 import sqlite3
-from typing import Optional, List, Dict, Any
+import subprocess
+import sys
 from pathlib import Path
+from typing import Dict, List, Optional
+
+from cryptography.fernet import Fernet, InvalidToken
+
 from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class CredentialStore:
-    """Safely manages tokens and credentials in OS Credential Manager (Keyring) and local fallback store."""
+    """Safely manages tokens and credentials in OS Credential Manager (Keyring) and encrypted local fallback."""
+
+    _ENC_PREFIX = "enc:v1:"
 
     def __init__(self, service_name: Optional[str] = None):
         self.service_name = service_name or settings.credential_service_name
-        self._fallback_file = Path(settings.data_dir) / ".credentials_fallback.json"
-        
+        data_dir = Path(settings.data_dir)
+        self._fallback_file = data_dir / ".credentials_fallback.json"
+        self._key_file = data_dir / ".credentials.key"
+
+    def _get_cipher(self) -> Fernet:
+        """Load or generate a local symmetric key for fallback credential encryption."""
+        self._key_file.parent.mkdir(parents=True, exist_ok=True)
+        if self._key_file.exists():
+            raw_key = self._key_file.read_bytes().strip()
+            try:
+                return Fernet(raw_key)
+            except Exception:
+                pass
+        key = Fernet.generate_key()
+        self._key_file.write_bytes(key)
+        if sys.platform != "win32":
+            try:
+                os.chmod(self._key_file, 0o600)
+            except OSError:
+                pass
+        return Fernet(key)
+
+    def _encrypt_secret(self, secret: str) -> str:
+        try:
+            token = self._get_cipher().encrypt(secret.encode("utf-8")).decode("ascii")
+            return f"{self._ENC_PREFIX}{token}"
+        except Exception as ex:
+            logger.warning("Failed to encrypt fallback credential: %s", ex)
+            return secret
+
+    def _decrypt_secret(self, stored: str) -> Optional[str]:
+        if not stored.startswith(self._ENC_PREFIX):
+            # Support reading legacy plaintext fallback entries seamlessly
+            return stored
+        token = stored[len(self._ENC_PREFIX):].encode("ascii")
+        try:
+            return self._get_cipher().decrypt(token).decode("utf-8")
+        except (InvalidToken, Exception) as ex:
+            logger.warning("Failed to decrypt fallback credential: %s", ex)
+            return None
+
     def save_credentials(self, account_identifier: str, secret_json: str) -> bool:
-        """Store credentials for an account across both Keyring and local secure store."""
-        # Always persist to local fallback file for guaranteed persistence across process restarts
-        self._save_fallback(account_identifier, secret_json)
-        
+        """Store credentials for an account in OS Keyring and encrypted local fallback store."""
+        keyring_ok = False
         try:
             import keyring
             keyring.set_password(self.service_name, account_identifier, secret_json)
-            return True
+            keyring_ok = True
         except Exception as ex:
-            logger.warning(f"OS keyring unavailable, using local secure file: {ex}")
-            return True
+            logger.warning("OS keyring unavailable, using encrypted local fallback: %s", ex)
+
+        # Persist encrypted fallback for resilience across restarts / headless environments
+        fallback_ok = self._save_fallback(account_identifier, secret_json)
+        return keyring_ok or fallback_ok
 
     def get_credentials(self, account_identifier: str) -> Optional[str]:
-        """Retrieve credentials for an account from Keyring or fallback file."""
+        """Retrieve credentials for an account from Keyring or encrypted fallback file."""
         try:
             import keyring
             secret = keyring.get_password(self.service_name, account_identifier)
             if secret:
                 return secret
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("Keyring lookup failed for %s: %s", account_identifier, ex)
         return self._get_fallback(account_identifier)
 
     def delete_credentials(self, account_identifier: str) -> bool:
-        """Remove credentials for an account."""
+        """Remove credentials for an account from both Keyring and local fallback."""
         try:
             import keyring
             keyring.delete_password(self.service_name, account_identifier)
@@ -57,17 +103,15 @@ class CredentialStore:
     def list_stored_identifiers(self) -> List[str]:
         """Return all account identifiers present in the credential store (Keyring + local fallback)."""
         identifiers = set()
-        
-        # 1. From local fallback file
+
         if self._fallback_file.exists():
             try:
                 with open(self._fallback_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 identifiers.update(data.keys())
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("Failed to read fallback identifiers: %s", ex)
 
-        # 2. On Windows, check Windows Credential Manager targets for this service
         if sys.platform == "win32" and self.service_name:
             try:
                 out = subprocess.check_output(["cmdkey", "/list"], text=True, timeout=2.0)
@@ -77,31 +121,36 @@ class CredentialStore:
                     ident = ident.strip()
                     if ident and "@" in ident and not ident.startswith("test") and not ident.endswith(".local"):
                         identifiers.add(ident)
-                        # Ensure fallback file has the secret cached as well
                         if not self._get_fallback(ident):
                             secret = self.get_credentials(ident)
                             if secret:
                                 self._save_fallback(ident, secret)
             except Exception as ex:
-                logger.debug(f"cmdkey lookup skipped or failed: {ex}")
+                logger.debug("cmdkey lookup skipped or failed: %s", ex)
 
         return [i for i in identifiers if "@" in i and not i.startswith("test") and not i.endswith(".local")]
 
     def _save_fallback(self, account_identifier: str, secret: str) -> bool:
         try:
             self._fallback_file.parent.mkdir(parents=True, exist_ok=True)
-            data = {}
+            data: Dict[str, str] = {}
             if self._fallback_file.exists():
                 try:
                     with open(self._fallback_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
                 except Exception:
                     data = {}
-            data[account_identifier] = secret
+            data[account_identifier] = self._encrypt_secret(secret)
             with open(self._fallback_file, "w", encoding="utf-8") as f:
                 json.dump(data, f)
+            if sys.platform != "win32":
+                try:
+                    os.chmod(self._fallback_file, 0o600)
+                except OSError:
+                    pass
             return True
-        except Exception:
+        except Exception as ex:
+            logger.warning("Failed to save fallback credentials: %s", ex)
             return False
 
     def _get_fallback(self, account_identifier: str) -> Optional[str]:
@@ -110,8 +159,12 @@ class CredentialStore:
         try:
             with open(self._fallback_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data.get(account_identifier)
-        except Exception:
+            raw = data.get(account_identifier)
+            if not raw:
+                return None
+            return self._decrypt_secret(raw)
+        except Exception as ex:
+            logger.debug("Failed to read fallback credential: %s", ex)
             return None
 
     def _delete_fallback(self, account_identifier: str) -> None:
@@ -124,8 +177,8 @@ class CredentialStore:
                 del data[account_identifier]
                 with open(self._fallback_file, "w", encoding="utf-8") as f:
                     json.dump(data, f)
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("Failed to delete fallback credential: %s", ex)
 
 
 def reconcile_accounts(conn: sqlite3.Connection) -> int:

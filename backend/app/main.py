@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any, Optional
+from typing import Optional
 
 from backend.app.config import settings
 from backend.app.db.database import get_database, get_db
@@ -20,11 +20,13 @@ from backend.app.api.routes_settings import router as settings_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize database and run migrations on startup
+    # Initialize database, run migrations, load persisted settings, and reconcile credentials on startup
     db = get_database()
     db.initialize()
     with db.connect() as conn:
+        from backend.app.api.routes_settings import load_persisted_settings
         from backend.app.security.credential_store import reconcile_accounts
+        load_persisted_settings(conn)
         reconcile_accounts(conn)
     yield
 
@@ -64,73 +66,78 @@ def health_check():
 def get_overview(account_id: Optional[int] = None, conn: sqlite3.Connection = Depends(get_db)):
     """Mailbox overview statistics: counts, date coverage, storage, and top senders."""
     cursor = conn.cursor()
-    
+
     if account_id is not None:
-        acc_filter = f"AND m.account_id = {int(account_id)}"
+        acc_filter = "AND m.account_id = ?"
+        acc_params = (account_id,)
     else:
         acc_filter = "AND m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
+        acc_params = ()
+
+    active_folder = "(m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))"
 
     # Message count, unread, storage for active mailbox (excluding trash/spam)
     cursor.execute(f"""
-        SELECT 
+        SELECT
             COUNT(m.id) as total_messages,
             COALESCE(SUM(CASE WHEN m.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_messages,
             COALESCE(SUM(m.size_bytes), 0) as total_bytes,
             MIN(m.received_at) as earliest_date,
             MAX(m.received_at) as latest_date
         FROM messages m
-        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        WHERE {active_folder}
         {acc_filter};
-    """)
+    """, acc_params)
     m_stats = cursor.fetchone()
-    
+
     # Active Senders & domains count
     cursor.execute(f"""
-        SELECT COUNT(DISTINCT s.id) as total_senders, COUNT(DISTINCT s.domain) as total_domains 
+        SELECT COUNT(DISTINCT s.id) as total_senders, COUNT(DISTINCT s.domain) as total_domains
         FROM senders s
         JOIN messages m ON s.id = m.sender_id
-        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        WHERE {active_folder}
         {acc_filter};
-    """)
+    """, acc_params)
     s_stats = cursor.fetchone()
-    
+
     # Accounts count
     if account_id is not None:
-        acc_count = 1
+        cursor.execute("SELECT COUNT(id) FROM accounts WHERE id = ?;", (account_id,))
+        acc_count = cursor.fetchone()[0]
     else:
         cursor.execute("SELECT COUNT(id) FROM accounts WHERE status != 'paused';")
         acc_count = cursor.fetchone()[0]
-    
+
     # Top 5 senders by active message count
     cursor.execute(f"""
         SELECT s.id, s.normalized_address, s.display_name, s.domain,
                COUNT(m.id) as count, COALESCE(SUM(m.size_bytes), 0) as bytes
         FROM senders s
         JOIN messages m ON s.id = m.sender_id
-        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        WHERE {active_folder}
         {acc_filter}
         GROUP BY s.id
         HAVING count > 0
         ORDER BY count DESC
         LIMIT 5;
-    """)
+    """, acc_params)
     top_senders_count = [
         {"id": r[0], "address": r[1], "name": r[2] or r[1].split("@")[0], "domain": r[3], "message_count": r[4], "total_bytes": r[5]}
         for r in cursor.fetchall()
     ]
-    
+
     # Category counts for active messages
     cursor.execute(f"""
         SELECT c.name, c.color, COUNT(mc.message_id) as count
         FROM categories c
         JOIN message_categories mc ON c.id = mc.category_id
         JOIN messages m ON mc.message_id = m.id
-        WHERE (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
+        WHERE {active_folder}
         {acc_filter}
         GROUP BY c.id
         HAVING count > 0
         ORDER BY count DESC;
-    """)
+    """, acc_params)
     category_distribution = [
         {"name": r[0], "color": r[1], "count": r[2]}
         for r in cursor.fetchall()

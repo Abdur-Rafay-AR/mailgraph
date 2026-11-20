@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 import sqlite3
-from typing import Optional
 
 from backend.app.db.database import get_db, get_database
 from backend.app.models.schemas import MessageSearchRequest
@@ -94,11 +93,9 @@ def get_message_detail(message_id: int, conn: sqlite3.Connection = Depends(get_d
         for r in cursor.fetchall()
     ]
     
-    # Generate sanitized HTML preview
+    # Generate sanitized HTML preview (safely escape plaintext angle brackets)
     body_text = msg["body_text"] or ""
-    # Render basic paragraph formatting for preview if only plaintext exists
-    simulated_html = f"<div style='font-family: system-ui, sans-serif; white-space: pre-wrap; line-height: 1.6;'>{body_text}</div>"
-    sanitized_preview = HtmlSanitizer.sanitize(simulated_html, allow_remote_images=False)
+    sanitized_preview = HtmlSanitizer.render_plain_text_preview(body_text)
     
     return {
         "id": msg["id"],
@@ -137,6 +134,8 @@ def export_messages_csv(req: MessageSearchRequest):
         version=req.query.version,
         account_ids=req.query.account_ids,
         all=[QueryCondition(field=c.field, op=c.op, value=c.value) for c in req.query.all],
+        any=[QueryCondition(field=c.field, op=c.op, value=c.value) for c in req.query.any],
+        none=[QueryCondition(field=c.field, op=c.op, value=c.value) for c in req.query.none],
         search_term=req.query.search_term,
         exclude_protected=req.query.exclude_protected
     )

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import List, Any, Tuple, Optional, Dict
 
 ALLOWED_FIELDS: Dict[str, str] = {
+    "id": "messages.id",
     "sender_address": "messages.sender_address",
     "sender_domain": "senders.domain",
     "received_at": "messages.received_at",
@@ -61,9 +62,10 @@ class QueryCompiler:
         if ast.search_term and ast.search_term.strip():
             term = ast.search_term.strip()
             # Clean special FTS characters to avoid query syntax errors
-            clean_term = re.sub(r'["\*\^]', '', term)
-            where_clauses.append("messages.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ?)")
-            params.append(f'"{clean_term}"*')
+            clean_term = re.sub(r'["\*\^]+', '', term).strip()
+            if clean_term:
+                where_clauses.append("messages.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ?)")
+                params.append(f'"{clean_term}"*')
             
         # 3. AND conditions (all)
         if ast.all:

@@ -175,16 +175,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ is_protected }),
     }),
-  previewBulkSendersCleanup: (data: { sender_ids: number[]; operation_type: 'trash' | 'archive'; exclude_protected?: boolean }) =>
+  previewBulkSendersCleanup: (data: { sender_ids: number[]; operation_type: 'trash' | 'archive'; exclude_protected?: boolean; account_id?: number }) =>
     request<any>('/senders/bulk-cleanup-preview', { method: 'POST', body: JSON.stringify(data) }),
-  executeBulkSendersCleanup: (data: { sender_ids: number[]; operation_type: 'trash' | 'archive'; exclude_protected?: boolean }) =>
-    request<{ status: string; operation_id: number }>('/senders/bulk-cleanup-execute', { method: 'POST', body: JSON.stringify(data) }),
+  executeBulkSendersCleanup: (data: { sender_ids: number[]; operation_type: 'trash' | 'archive'; exclude_protected?: boolean; account_id?: number }) =>
+    request<{ status: string; operation_id: number; operation_ids?: number[] }>('/senders/bulk-cleanup-execute', { method: 'POST', body: JSON.stringify(data) }),
 
   // Messages
   searchMessages: (data: { query: QueryAST; page?: number; page_size?: number; sort_by?: string; sort_dir?: string }) =>
     request<SearchResult>('/messages/search', { method: 'POST', body: JSON.stringify(data) }),
   getMessageDetail: (id: number) => request<MessageDetail>(`/messages/${id}`),
   exportCsvUrl: () => `${API_BASE}/messages/export/csv`,
+  getAttachmentDownloadUrl: (attachmentId: number) => `${API_BASE}/attachments/${attachmentId}/download`,
 
   // Graph
   getGraph: (params: {
@@ -252,7 +253,8 @@ export const api = {
     ),
 
   // Insights
-  getInsights: () => request<Insight[]>('/insights'),
+  getInsights: (accountId?: number) =>
+    request<Insight[]>(`/insights${accountId !== undefined ? `?account_id=${accountId}` : ''}`),
   dismissInsight: (id: number) => request<{ status: string }>(`/insights/${id}/dismiss`, { method: 'POST' }),
 
   // Settings & Protection

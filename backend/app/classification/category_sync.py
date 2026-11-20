@@ -185,14 +185,14 @@ class CategoryLabelSyncService:
                 cursor.execute("""
                     SELECT id, query_snapshot_json, status
                     FROM operations
-                    WHERE account_id = ? AND query_snapshot_json LIKE '%' || ? || '%'
+                    WHERE account_id = ? AND json_extract(query_snapshot_json, '$.batch_id') = ?
                     ORDER BY id ASC;
                 """, (account_id, batch_id))
             else:
                 cursor.execute("""
                     SELECT id, query_snapshot_json, status
                     FROM operations
-                    WHERE query_snapshot_json LIKE '%' || ? || '%'
+                    WHERE json_extract(query_snapshot_json, '$.batch_id') = ?
                     ORDER BY id ASC;
                 """, (batch_id,))
             rows = cursor.fetchall()

@@ -1,7 +1,7 @@
 """Pydantic request and response schemas for MailGraph API."""
 
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Any
 
 class AccountCreate(BaseModel):
     provider: str  # 'synthetic', 'mbox', 'imap', 'gmail'
@@ -71,6 +71,7 @@ class BulkSenderCleanupRequest(BaseModel):
     sender_ids: List[int]
     operation_type: str  # 'trash' or 'archive'
     exclude_protected: bool = True
+    account_id: Optional[int] = None
 
 class CleanupPreviewRequest(BaseModel):
     account_id: Optional[int] = None

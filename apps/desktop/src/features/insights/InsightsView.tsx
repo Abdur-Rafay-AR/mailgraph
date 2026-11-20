@@ -6,12 +6,16 @@ import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 
 interface InsightsViewProps {
+  accountId?: number;
   onOpenMessages?: (senderAddress?: string) => void;
+  onOpenAttachments?: () => void;
   onOpenCleanup?: (query: QueryAST) => void;
 }
 
 export const InsightsView: React.FC<InsightsViewProps> = ({
+  accountId,
   onOpenMessages,
+  onOpenAttachments,
   onOpenCleanup,
 }) => {
   const [insights, setInsights] = useState<Insight[]>([]);
@@ -20,7 +24,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
   const fetchInsights = async () => {
     setLoading(true);
     try {
-      const data = await api.getInsights();
+      const data = await api.getInsights(accountId);
       setInsights(data);
     } catch (err) {
       console.error(err);
@@ -31,7 +35,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
 
   useEffect(() => {
     fetchInsights();
-  }, []);
+  }, [accountId]);
 
   const handleDismiss = async (id: number) => {
     try {
@@ -151,7 +155,18 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
                   </Button>
                 )}
 
-                {ins.evidence?.sender_address && onOpenCleanup && (
+                {ins.insight_type === 'large_attachments' && onOpenAttachments && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={onOpenAttachments}
+                    icon={<ExternalLink className="w-3.5 h-3.5" />}
+                  >
+                    Inspect Attachments
+                  </Button>
+                )}
+
+                {ins.evidence?.sender_address && onOpenCleanup && ins.insight_type !== 'unreplied_thread' && (
                   <Button
                     size="xs"
                     variant="danger"

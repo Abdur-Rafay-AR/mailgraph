@@ -1,11 +1,9 @@
 """Safe cleanup operations, simulation previews, audit logging, and undo endpoints."""
 
-import json
 from fastapi import APIRouter, Depends, HTTPException
 import sqlite3
-from typing import List, Dict, Any
 
-from backend.app.db.database import Database, get_db, get_database
+from backend.app.db.database import get_db, get_database
 from backend.app.models.schemas import CleanupPreviewRequest, CleanupExecuteRequest, CleanupUndoRequest
 from backend.app.search.query_compiler import QueryAST, QueryCondition
 from backend.app.actions.engine import ActionEngine

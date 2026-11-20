@@ -24,7 +24,7 @@ if root_dir not in sys.path:
 from backend.app.db.database import get_database
 from backend.app.security.credential_store import CredentialStore
 from backend.app.providers.imap import ImapProvider
-from backend.app.providers.gmail import GmailProvider, MODIFY_SCOPE
+from backend.app.providers.gmail import MODIFY_SCOPE
 from backend.app.ingestion.pipeline import IngestionPipeline
 
 def print_banner():
