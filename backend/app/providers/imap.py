@@ -5,6 +5,7 @@ import re
 from typing import Generator, List, Optional, Dict, Any
 from backend.app.providers.base import AbstractMailProvider, ProviderCapabilities, ProviderFolder
 from backend.app.ingestion.mime_parser import MimeParser, ParsedEmail
+from backend.app.providers.exceptions import UIDValidityChangedError
 
 class ImapProvider(AbstractMailProvider):
     """Connects to any RFC3501 compliant IMAP server."""
@@ -30,7 +31,7 @@ class ImapProvider(AbstractMailProvider):
             supports_archive=True,
             supports_trash=True,
             supports_undo=False,
-            supports_labels=False,
+            supports_labels=True,
             is_read_only=False,
             provider_name="imap"
         )
@@ -381,3 +382,129 @@ class ImapProvider(AbstractMailProvider):
                 pass
 
         return {"status": "success", "count": deleted_count}
+
+    def _extract_uidvalidity(self, select_data: Any = None) -> Optional[str]:
+        """Extract UIDVALIDITY string from IMAP client response or select data."""
+        if not self.client:
+            return None
+        try:
+            typ, resp_data = self.client.response("UIDVALIDITY")
+            if typ == "OK" and resp_data and resp_data[0] is not None:
+                raw = resp_data[0]
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                m = re.search(r"(\d+)", str(raw))
+                if m:
+                    return m.group(1)
+                return str(raw).strip()
+        except Exception:
+            pass
+
+        if select_data:
+            for item in select_data:
+                if isinstance(item, (bytes, str)):
+                    text = item.decode("utf-8", errors="replace") if isinstance(item, bytes) else str(item)
+                    m = re.search(r"UIDVALIDITY\s+(\d+)", text, re.IGNORECASE)
+                    if m:
+                        return m.group(1)
+
+        untagged = getattr(self.client, "untagged_responses", {})
+        if "UIDVALIDITY" in untagged and untagged["UIDVALIDITY"] and untagged["UIDVALIDITY"][0] is not None:
+            raw = untagged["UIDVALIDITY"][0]
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            m = re.search(r"(\d+)", str(raw))
+            if m:
+                return m.group(1)
+            return str(raw).strip()
+
+        return None
+
+    def get_folder_uidvalidity(self, folder: str) -> Optional[str]:
+        """Inspect and return the UIDVALIDITY string for a folder."""
+        if not self.client:
+            self.connect()
+        assert self.client is not None
+
+        try:
+            typ, data = self.client.select(f'"{folder}"', readonly=True)
+            if typ != "OK":
+                return None
+            return self._extract_uidvalidity(data)
+        except Exception:
+            return None
+
+    def apply_labels(
+        self,
+        provider_message_ids: List[str],
+        add_labels: Optional[List[str]] = None,
+        remove_labels: Optional[List[str]] = None,
+        expected_uidvalidity: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """Apply or remove Gmail labels (+X-GM-LABELS / -X-GM-LABELS) with UIDVALIDITY verification."""
+        if not provider_message_ids:
+            return {"status": "success", "count": 0}
+
+        if not self.client:
+            self.connect()
+        assert self.client is not None
+
+        by_folder: Dict[str, List[str]] = {}
+        for pmid in provider_message_ids:
+            parsed = self._parse_provider_id(pmid)
+            if parsed:
+                f, u = parsed
+                by_folder.setdefault(f, []).append(u)
+
+        if not by_folder:
+            return {"status": "success", "count": 0}
+
+        # Step 2: For each folder, select read-write and verify UIDVALIDITY
+        for folder in by_folder.keys():
+            typ, data = self.client.select(f'"{folder}"', readonly=False)
+            if typ != "OK":
+                raise RuntimeError(f"Failed to select folder '{folder}' in read-write mode")
+            actual_uidval = self._extract_uidvalidity(data)
+            if expected_uidvalidity and folder in expected_uidvalidity:
+                expected = str(expected_uidvalidity[folder])
+                if actual_uidval != expected:
+                    raise UIDValidityChangedError(folder=folder, expected=expected, actual=str(actual_uidval or ""))
+
+        # Step 3: Ensure label mailboxes exist
+        if add_labels:
+            for lbl in add_labels:
+                typ, existing = self.client.list(pattern=f'"{lbl}"')
+                exists = False
+                if typ == "OK" and existing:
+                    for item in existing:
+                        if item:
+                            exists = True
+                            break
+                if not exists:
+                    self.client.create(f'"{lbl}"')
+
+        # Step 4: In chunks of 100 UIDs, apply / remove labels
+        total_uids = 0
+        currently_selected = next(iter(by_folder)) if len(by_folder) == 1 else None
+
+        for folder, uids in by_folder.items():
+            if currently_selected != folder:
+                typ, _ = self.client.select(f'"{folder}"', readonly=False)
+                if typ != "OK":
+                    raise RuntimeError(f"Failed to select folder '{folder}' in read-write mode")
+                currently_selected = folder
+
+            total_uids += len(uids)
+            for i in range(0, len(uids), 100):
+                chunk = uids[i:i + 100]
+                uid_set = ",".join(chunk)
+
+                if add_labels:
+                    for lbl in add_labels:
+                        self.client.uid("STORE", uid_set, "+X-GM-LABELS", f'("{lbl}")')
+
+                if remove_labels:
+                    for lbl in remove_labels:
+                        self.client.uid("STORE", uid_set, "-X-GM-LABELS", f'("{lbl}")')
+
+        return {"status": "success", "count": total_uids}

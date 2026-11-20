@@ -76,14 +76,23 @@ class CleanupPreviewRequest(BaseModel):
     account_id: Optional[int] = None
     operation_type: str = "trash"
     query: QueryASTSchema
+    label_name: Optional[str] = None
 
 class CleanupExecuteRequest(BaseModel):
     account_id: Optional[int] = None
     operation_type: str = "trash"
     query: QueryASTSchema
+    label_name: Optional[str] = None
 
 class CleanupUndoRequest(BaseModel):
     operation_id: int
+
+class CategorySyncExecuteRequest(BaseModel):
+    categories: Optional[List[str]] = None
+    batch_id: Optional[str] = None
+
+class CategorySyncUndoRequest(BaseModel):
+    batch_id: str
 
 class ProtectionRuleCreate(BaseModel):
     account_id: Optional[int] = None

@@ -14,9 +14,14 @@ import {
   ProtectionRule,
   DuplicateAttachmentGroup,
   SyncJob,
-} from '../types/api';
+  CategorySyncPreview,
+  CategorySyncExecuteResponse,
+  CategorySyncUndoResponse,
+  CleanupPreviewParams,
+  CleanupExecuteParams,
+} from '../types';
 
-const API_BASE = 'http://127.0.0.1:28491/api';
+export const API_BASE = 'http://127.0.0.1:28491/api';
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
@@ -43,6 +48,53 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     throw err;
   }
 }
+
+// Category Label Sync API
+export const previewCategorySync = async (accountId: number): Promise<CategorySyncPreview> => {
+  return request<CategorySyncPreview>(`/accounts/${accountId}/sync-labels/preview`, { method: 'POST' });
+};
+
+export const executeCategorySync = async (
+  accountId: number,
+  categories?: string[],
+  batchId?: string
+): Promise<CategorySyncExecuteResponse> => {
+  return request<CategorySyncExecuteResponse>(`/accounts/${accountId}/sync-labels/execute`, {
+    method: 'POST',
+    body: JSON.stringify({ categories, batch_id: batchId }),
+  });
+};
+
+export const undoCategorySync = async (accountId: number, batchId: string): Promise<CategorySyncUndoResponse> => {
+  return request<CategorySyncUndoResponse>(`/accounts/${accountId}/sync-labels/undo`, {
+    method: 'POST',
+    body: JSON.stringify({ batch_id: batchId }),
+  });
+};
+
+// Cleanup API
+export const previewCleanup = async (data: CleanupPreviewParams): Promise<CleanupPreview> => {
+  return request<CleanupPreview>('/cleanup/preview', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const calculateCleanupPreview = previewCleanup;
+
+export const executeCleanup = async (data: CleanupExecuteParams): Promise<CleanupOperation> => {
+  return request<CleanupOperation>('/cleanup/execute', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const undoCleanup = async (operationId: number) => {
+  return request<{ operation_id: number; status: string; restored_count: number }>('/cleanup/undo', {
+    method: 'POST',
+    body: JSON.stringify({ operation_id: operationId }),
+  });
+};
 
 export const api = {
   // Health & Overview
@@ -88,6 +140,10 @@ export const api = {
     request<{ active: boolean; job: SyncJob | null }>('/accounts/sync/active'),
   stopActiveSync: () =>
     request<{ status: string; stopped: boolean }>('/accounts/sync/stop', { method: 'POST' }),
+  previewCategorySync: (accountId: number) => previewCategorySync(accountId),
+  executeCategorySync: (accountId: number, categories?: string[], batchId?: string) =>
+    executeCategorySync(accountId, categories, batchId),
+  undoCategorySync: (accountId: number, batchId: string) => undoCategorySync(accountId, batchId),
 
   // Senders
   getSenders: (params: {
@@ -152,15 +208,10 @@ export const api = {
   },
 
   // Cleanup Studio
-  calculateCleanupPreview: (data: { account_id?: number; operation_type: string; query: QueryAST }) =>
-    request<CleanupPreview>('/cleanup/preview', { method: 'POST', body: JSON.stringify(data) }),
-  executeCleanup: (data: { account_id?: number; operation_type: string; query: QueryAST }) =>
-    request<CleanupOperation>('/cleanup/execute', { method: 'POST', body: JSON.stringify(data) }),
-  undoCleanup: (operationId: number) =>
-    request<{ operation_id: number; status: string; restored_count: number }>('/cleanup/undo', {
-      method: 'POST',
-      body: JSON.stringify({ operation_id: operationId }),
-    }),
+  calculateCleanupPreview: (data: CleanupPreviewParams) => calculateCleanupPreview(data),
+  previewCleanup: (data: CleanupPreviewParams) => previewCleanup(data),
+  executeCleanup: (data: CleanupExecuteParams) => executeCleanup(data),
+  undoCleanup: (operationId: number) => undoCleanup(operationId),
   listOperations: () => request<CleanupOperation[]>('/cleanup/operations'),
 
   // Timeline

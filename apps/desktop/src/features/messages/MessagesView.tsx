@@ -11,13 +11,18 @@ import {
   CheckSquare,
   Square,
   Shield,
-  Clock
+  Clock,
+  Tag,
+  Undo2,
+  CheckCircle2,
+  X
 } from 'lucide-react';
 import { api } from '../../api/client';
-import { MessageItem, QueryAST, QueryCondition } from '../../types/api';
+import { MessageItem, QueryAST, QueryCondition, CleanupOperation } from '../../types/api';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { MessageDetailModal } from './MessageDetailModal';
+import { TagMessagesModal } from './TagMessagesModal';
 
 interface MessagesViewProps {
   accountId?: number;
@@ -57,33 +62,108 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
   // Detail Modal
   const [activeMessageId, setActiveMessageId] = useState<number | null>(null);
 
+  // Tag Modal & Toast
+  const [isTagModalOpen, setIsTagModalOpen] = useState<boolean>(false);
+  const [tagModalQuery, setTagModalQuery] = useState<QueryAST | null>(null);
+  const [tagModalTargetCount, setTagModalTargetCount] = useState<number>(0);
+  const [tagModalIsSelection, setTagModalIsSelection] = useState<boolean>(false);
+  const [tagToast, setTagToast] = useState<{
+    operationId: number;
+    labelName: string;
+    count: number;
+    undoing: boolean;
+    undone: boolean;
+    restoredCount?: number;
+  } | null>(null);
+
+  const getCurrentSearchQuery = (): QueryAST => {
+    const allConditions: QueryCondition[] = [];
+    if (selectedCategory) {
+      allConditions.push({ field: 'category', op: 'eq', value: selectedCategory });
+    }
+    if (unreadOnly) {
+      allConditions.push({ field: 'is_read', op: 'eq', value: false });
+    }
+    if (hasAttachmentsOnly) {
+      allConditions.push({ field: 'has_attachments', op: 'eq', value: true });
+    }
+    if (starredOnly) {
+      allConditions.push({ field: 'is_starred', op: 'eq', value: true });
+    }
+    if (senderFilter) {
+      allConditions.push({ field: 'sender_address', op: 'eq', value: senderFilter });
+    }
+
+    return {
+      version: 1,
+      account_ids: accountId !== undefined ? [accountId] : undefined,
+      search_term: searchTerm.trim() || undefined,
+      all: allConditions,
+      exclude_protected: excludeProtected,
+    };
+  };
+
+  const getSelectionQuery = (): QueryAST => {
+    return {
+      version: 1,
+      account_ids: accountId !== undefined ? [accountId] : undefined,
+      all: [{ field: 'id', op: 'in', value: Array.from(selectedIds) }],
+      exclude_protected: excludeProtected,
+    };
+  };
+
+  const handleOpenTagModal = () => {
+    if (selectedIds.size > 0) {
+      setTagModalQuery(getSelectionQuery());
+      setTagModalTargetCount(selectedIds.size);
+      setTagModalIsSelection(true);
+    } else {
+      setTagModalQuery(getCurrentSearchQuery());
+      setTagModalTargetCount(totalCount);
+      setTagModalIsSelection(false);
+    }
+    setIsTagModalOpen(true);
+  };
+
+  const handleTagSuccess = (operation: CleanupOperation, labelName: string) => {
+    const count = operation.completed_count ?? operation.target_count ?? tagModalTargetCount;
+    setSelectedIds(new Set());
+    fetchMessages();
+    setTagToast({
+      operationId: operation.id,
+      labelName,
+      count,
+      undoing: false,
+      undone: false,
+    });
+  };
+
+  const handleUndoTag = async (operationId: number) => {
+    setTagToast((prev) => (prev ? { ...prev, undoing: true } : null));
+    try {
+      const res = await api.undoCleanup(operationId);
+      setTagToast((prev) =>
+        prev
+          ? {
+              ...prev,
+              undoing: false,
+              undone: true,
+              restoredCount: res.restored_count,
+            }
+          : null
+      );
+      setSelectedIds(new Set());
+      await fetchMessages();
+    } catch (err: any) {
+      alert(err.message || 'Error executing undo');
+      setTagToast((prev) => (prev ? { ...prev, undoing: false } : null));
+    }
+  };
+
   const fetchMessages = async () => {
     setLoading(true);
     try {
-      const allConditions: QueryCondition[] = [];
-      if (selectedCategory) {
-        allConditions.push({ field: 'category', op: 'eq', value: selectedCategory });
-      }
-      if (unreadOnly) {
-        allConditions.push({ field: 'is_read', op: 'eq', value: false });
-      }
-      if (hasAttachmentsOnly) {
-        allConditions.push({ field: 'has_attachments', op: 'eq', value: true });
-      }
-      if (starredOnly) {
-        allConditions.push({ field: 'is_starred', op: 'eq', value: true });
-      }
-      if (senderFilter) {
-        allConditions.push({ field: 'sender_address', op: 'eq', value: senderFilter });
-      }
-
-      const ast: QueryAST = {
-        version: 1,
-        account_ids: accountId !== undefined ? [accountId] : undefined,
-        search_term: searchTerm.trim() || undefined,
-        all: allConditions,
-        exclude_protected: excludeProtected,
-      };
+      const ast = getCurrentSearchQuery();
 
       const res = await api.searchMessages({
         query: ast,
@@ -176,6 +256,16 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
             <span className="text-xs text-slate-400 font-mono">
               {totalCount.toLocaleString()} matches
             </span>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={loading || (totalCount === 0 && selectedIds.size === 0)}
+              icon={<Tag className="w-3.5 h-3.5 text-brand-light" />}
+              onClick={handleOpenTagModal}
+              title="Tag in Gmail"
+            >
+              Tag in Gmail
+            </Button>
             <Button
               size="xs"
               variant="outline"
@@ -304,6 +394,59 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
         </div>
       </div>
 
+      {/* Success / Undo Toast Banner */}
+      {tagToast && (
+        <div
+          className={`px-4 py-2.5 border-b flex items-center justify-between text-xs transition-colors z-20 ${
+            tagToast.undone
+              ? 'bg-slate-900 border-border-subtle text-slate-300'
+              : 'bg-brand/15 border-brand/40 text-brand-light shadow-inner'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-mono">
+              {tagToast.undone ? (
+                <>
+                  Successfully removed label <strong className="text-white">"{tagToast.labelName}"</strong> from{' '}
+                  <strong className="text-white">{(tagToast.restoredCount ?? tagToast.count).toLocaleString()} messages</strong>.
+                </>
+              ) : tagToast.count === 0 ? (
+                <span>Protected messages shielded: 0 messages labeled.</span>
+              ) : (
+                <>
+                  Successfully applied label <strong className="text-white">"{tagToast.labelName}"</strong> to{' '}
+                  <strong className="text-white">
+                    {tagToast.count.toLocaleString()} message{tagToast.count === 1 ? '' : 's'}
+                  </strong>{' '}
+                  in Gmail.
+                </>
+              )}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {!tagToast.undone && (
+              <Button
+                size="xs"
+                variant="outline"
+                loading={tagToast.undoing}
+                icon={<Undo2 className="w-3.5 h-3.5" />}
+                onClick={() => handleUndoTag(tagToast.operationId)}
+              >
+                Undo
+              </Button>
+            )}
+            <button
+              onClick={() => setTagToast(null)}
+              className="text-slate-400 hover:text-white p-1 transition-colors"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Floating Action Bar when messages are selected */}
       {selectedIds.size > 0 && (
         <div className="bg-bg-elevated border-b border-brand/40 px-6 py-2.5 flex items-center justify-between animate-fadeIn z-10 shadow-lg">
@@ -314,6 +457,14 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
           <div className="flex items-center gap-2">
             <Button size="xs" variant="outline" onClick={() => setSelectedIds(new Set())}>
               Deselect All
+            </Button>
+            <Button
+              size="xs"
+              variant="secondary"
+              icon={<Tag className="w-3.5 h-3.5 text-brand-light" />}
+              onClick={handleOpenTagModal}
+            >
+              Tag in Gmail
             </Button>
             <Button
               size="xs"
@@ -486,6 +637,17 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
           }
           setActiveMessageId(null);
         }}
+      />
+
+      {/* Tag in Gmail Modal */}
+      <TagMessagesModal
+        isOpen={isTagModalOpen}
+        onClose={() => setIsTagModalOpen(false)}
+        query={tagModalQuery}
+        targetCount={tagModalTargetCount}
+        isSelection={tagModalIsSelection}
+        accountId={accountId}
+        onSuccess={handleTagSuccess}
       />
     </div>
   );

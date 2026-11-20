@@ -3,6 +3,7 @@ import {
   ShieldCheck,
   Trash2,
   Archive,
+  Tag,
   RotateCcw,
   AlertTriangle,
   Info,
@@ -20,6 +21,16 @@ import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 
+const PRESET_LABELS = [
+  'MailGraph/Finance',
+  'MailGraph/Receipts',
+  'MailGraph/Newsletters',
+  'MailGraph/Security',
+  'MailGraph/Personal',
+  'MailGraph/Work',
+  'MailGraph/Promotional',
+];
+
 interface CleanupStudioProps {
   initialQuery?: QueryAST;
 }
@@ -28,7 +39,8 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
   const [activeTab, setActiveTab] = useState<'builder' | 'audit'>('builder');
 
   // Query Builder State
-  const [operationType, setOperationType] = useState<'trash' | 'archive'>('trash');
+  const [operationType, setOperationType] = useState<'trash' | 'archive' | 'label'>('trash');
+  const [labelName, setLabelName] = useState<string>('MailGraph/Finance');
   const [targetCategory, setTargetCategory] = useState<string>('newsletter');
   const [daysOld, setDaysOld] = useState<number>(90);
   const [readOnly, setReadOnly] = useState<boolean>(true);
@@ -97,6 +109,10 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
   };
 
   const handleCalculatePreview = async (overrideAst?: QueryAST) => {
+    if (operationType === 'label' && !labelName.trim()) {
+      alert('Please enter a valid Gmail label name.');
+      return;
+    }
     const ast = overrideAst || buildQueryAST();
     setCalculatingPreview(true);
     setExecutionResult(null);
@@ -104,6 +120,7 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
       const res = await api.calculateCleanupPreview({
         operation_type: operationType,
         query: ast,
+        label_name: operationType === 'label' ? labelName.trim() : undefined,
       });
       setPreview(res);
     } catch (err: any) {
@@ -115,18 +132,34 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
 
   const handleExecuteOperation = async () => {
     if (!preview) return;
+    if (operationType === 'label' && !labelName.trim()) {
+      alert('Please enter a valid Gmail label name.');
+      return;
+    }
     setExecuting(true);
     setExecProgress(15);
-    setExecStatusText('Verifying target safe-lists and message UIDs...');
+    setExecStatusText(
+      operationType === 'label'
+        ? 'Verifying target safe-lists and Gmail label parameters...'
+        : 'Verifying target safe-lists and message UIDs...'
+    );
 
     const timer1 = setTimeout(() => {
       setExecProgress(45);
-      setExecStatusText(`Moving messages to ${operationType === 'trash' ? 'Trash' : 'Archive'} on mail server...`);
+      if (operationType === 'label') {
+        setExecStatusText(`Applying label "${labelName.trim()}" on mail server...`);
+      } else {
+        setExecStatusText(`Moving messages to ${operationType === 'trash' ? 'Trash' : 'Archive'} on mail server...`);
+      }
     }, 450);
 
     const timer2 = setTimeout(() => {
       setExecProgress(75);
-      setExecStatusText('Synchronizing local database records and folders...');
+      setExecStatusText(
+        operationType === 'label'
+          ? 'Synchronizing local label mappings and message records...'
+          : 'Synchronizing local database records and folders...'
+      );
     }, 1100);
 
     const timer3 = setTimeout(() => {
@@ -139,6 +172,7 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
       const res = await api.executeCleanup({
         operation_type: operationType,
         query: ast,
+        label_name: operationType === 'label' ? labelName.trim() : undefined,
       });
       clearTimeout(timer1);
       clearTimeout(timer2);
@@ -167,7 +201,12 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
     setUndoingId(operationId);
     try {
       const res = await api.undoCleanup(operationId);
-      alert(`Successfully restored ${res.restored_count} messages back to their original folders!`);
+      const op = operations.find((o) => o.id === operationId);
+      if (op?.operation_type === 'label' || (operationType === 'label' && executionResult?.id === operationId)) {
+        alert(`Successfully removed label from ${res.restored_count} messages!`);
+      } else {
+        alert(`Successfully restored ${res.restored_count} messages back to their original folders!`);
+      }
       await loadOperations();
     } catch (err: any) {
       alert(err.message || 'Error executing undo');
@@ -254,14 +293,88 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
                 <label className="block text-slate-400 font-mono text-[11px] mb-1">SAFE ACTION</label>
                 <select
                   value={operationType}
-                  onChange={(e) => setOperationType(e.target.value as 'trash' | 'archive')}
+                  onChange={(e) => setOperationType(e.target.value as 'trash' | 'archive' | 'label')}
                   className="w-full bg-bg-deep border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none"
                 >
                   <option value="trash">Move to Trash (Recoverable)</option>
                   <option value="archive">Archive (Remove from Inbox)</option>
+                  <option value="label">Apply Gmail Label (Tag in Gmail)</option>
                 </select>
               </div>
             </div>
+
+            {/* Label Name Selector for Gmail Label Operation */}
+            {operationType === 'label' && (
+              <div className="p-4 bg-bg-deep rounded border border-border-muted space-y-3 animate-fadeIn">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 font-mono text-[11px] font-semibold flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-brand-light" />
+                    GMAIL LABEL CONFIGURATION
+                  </label>
+                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 px-2 py-0.5 rounded">
+                    Non-Destructive • Reversible
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  {/* Preset Suggestions Dropdown */}
+                  <div>
+                    <label className="block text-slate-400 font-mono text-[11px] mb-1">
+                      PRESET CATEGORY SUGGESTIONS
+                    </label>
+                    <select
+                      value={PRESET_LABELS.includes(labelName) ? labelName : '__custom__'}
+                      onChange={(e) => {
+                        if (e.target.value !== '__custom__') {
+                          setLabelName(e.target.value);
+                        }
+                      }}
+                      className="w-full bg-bg-surface border border-border-muted rounded px-3 py-1.5 text-slate-200 focus:outline-none font-mono"
+                    >
+                      {PRESET_LABELS.map((preset) => (
+                        <option key={preset} value={preset}>
+                          {preset}
+                        </option>
+                      ))}
+                      <option value="__custom__">Custom Label...</option>
+                    </select>
+                  </div>
+
+                  {/* Custom Label Input Field */}
+                  <div>
+                    <label className="block text-slate-400 font-mono text-[11px] mb-1">
+                      CUSTOM LABEL NAME
+                    </label>
+                    <input
+                      type="text"
+                      value={labelName}
+                      onChange={(e) => setLabelName(e.target.value)}
+                      placeholder="e.g. MailGraph/CustomTag"
+                      className="w-full bg-bg-surface border border-border-muted rounded px-3 py-1.5 text-slate-200 placeholder-slate-600 focus:outline-none font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Preset Chips */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[11px] font-mono text-slate-400 mr-1">Suggestions:</span>
+                  {PRESET_LABELS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setLabelName(preset)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                        labelName === preset
+                          ? 'bg-brand text-white border border-brand'
+                          : 'bg-bg-surface text-slate-400 hover:text-slate-200 border border-border-muted hover:border-slate-500'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Checkbox Options */}
             <div className="flex items-center gap-6 pt-2 text-xs">
@@ -309,7 +422,9 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
                     Operation #{executionResult.id} Completed Successfully
                   </div>
                   <div className="text-slate-300 text-[11px] font-mono mt-0.5">
-                    {executionResult.completed_count} messages moved to {operationType}. Undo is available.
+                    {operationType === 'label'
+                      ? `${executionResult.completed_count} messages tagged with label "${labelName.trim()}". Undo is available.`
+                      : `${executionResult.completed_count} messages moved to ${operationType}. Undo is available.`}
                   </div>
                 </div>
               </div>
@@ -345,12 +460,14 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
                 </div>
 
                 <div className="p-3 bg-bg-deep rounded border border-border-subtle">
-                  <div className="text-[11px] text-slate-400 font-mono">ESTIMATED STORAGE</div>
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    {operationType === 'label' ? 'TARGET DATA SIZE' : 'ESTIMATED STORAGE'}
+                  </div>
                   <div className="text-xl font-bold font-mono text-slate-100">
                     {(preview.total_size_bytes / (1024 * 1024)).toFixed(2)} MB
                   </div>
                   <div className="text-[10px] text-emerald-400 font-mono mt-0.5">
-                    Reclaimable local storage
+                    {operationType === 'label' ? 'Non-destructive tag' : 'Reclaimable local storage'}
                   </div>
                 </div>
 
@@ -370,10 +487,10 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
                 <div className="p-3 bg-bg-deep rounded border border-border-subtle">
                   <div className="text-[11px] text-slate-400 font-mono">REVERSIBILITY</div>
                   <div className="text-sm font-semibold font-mono text-emerald-400 mt-1">
-                    100% Recoverable
+                    {preview.reversible ? '100% Recoverable' : 'Irreversible'}
                   </div>
-                  <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                    Logged in audit table
+                  <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate" title={preview.reversibility_note}>
+                    {preview.reversibility_note || 'Logged in audit table'}
                   </div>
                 </div>
               </div>
@@ -425,7 +542,15 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
                   variant={operationType === 'trash' ? 'danger' : 'primary'}
                   disabled={preview.target_count === 0}
                   onClick={() => setConfirmModalOpen(true)}
-                  icon={operationType === 'trash' ? <Trash2 className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
+                  icon={
+                    operationType === 'trash' ? (
+                      <Trash2 className="w-4 h-4" />
+                    ) : operationType === 'label' ? (
+                      <Tag className="w-4 h-4" />
+                    ) : (
+                      <Archive className="w-4 h-4" />
+                    )
+                  }
                 >
                   Proceed to Confirmation ({preview.target_count} messages)
                 </Button>
@@ -437,29 +562,70 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
           <Modal
             isOpen={confirmModalOpen}
             onClose={() => setConfirmModalOpen(false)}
-            title={`Explicit Confirmation: ${operationType === 'trash' ? 'Move to Trash' : 'Archive'}`}
-            subtitle="Destructive safety requirement: verify your intent before mutating mailbox state"
+            title={
+              operationType === 'trash'
+                ? 'Explicit Confirmation: Move to Trash'
+                : operationType === 'archive'
+                ? 'Explicit Confirmation: Archive'
+                : 'Explicit Confirmation: Apply Gmail Label'
+            }
+            subtitle={
+              operationType === 'label'
+                ? 'Non-destructive labeling: verify label application before mutating mailbox tags'
+                : 'Destructive safety requirement: verify your intent before mutating mailbox state'
+            }
             maxWidth="lg"
           >
             <div className="space-y-4 text-xs">
-              <div className="p-3 rounded bg-amber-950/30 border border-amber-800/50 text-amber-200 flex items-start gap-2.5">
-                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div
+                className={`p-3 rounded border flex items-start gap-2.5 ${
+                  operationType === 'label'
+                    ? 'bg-blue-950/30 border-blue-800/50 text-blue-200'
+                    : 'bg-amber-950/30 border-amber-800/50 text-amber-200'
+                }`}
+              >
+                {operationType === 'label' ? (
+                  <Tag className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                )}
                 <p>
-                  You are about to {operationType === 'trash' ? 'move' : 'archive'}{' '}
-                  <strong className="text-white font-mono">{preview?.target_count} messages</strong> (~
-                  {preview ? (preview.total_size_bytes / (1024 * 1024)).toFixed(2) : 0} MB).
+                  {operationType === 'label' ? (
+                    <>
+                      You are about to apply label{' '}
+                      <strong className="text-white font-mono">"{labelName.trim()}"</strong> to{' '}
+                      <strong className="text-white font-mono">{preview?.target_count} messages</strong> (~
+                      {preview ? (preview.total_size_bytes / (1024 * 1024)).toFixed(2) : 0} MB).
+                    </>
+                  ) : (
+                    <>
+                      You are about to {operationType === 'trash' ? 'move' : 'archive'}{' '}
+                      <strong className="text-white font-mono">{preview?.target_count} messages</strong> (~
+                      {preview ? (preview.total_size_bytes / (1024 * 1024)).toFixed(2) : 0} MB).
+                    </>
+                  )}
                 </p>
               </div>
 
               <p className="text-slate-300 leading-relaxed font-sans">
-                MailGraph will sync this action with your live mailbox (moving messages to Trash on Gmail/IMAP) and snapshot the original state in local storage. You can undo this operation at any time from the Audit Trail tab.
+                {operationType === 'label'
+                  ? `MailGraph will create the label "${labelName.trim()}" if needed and attach it to matching messages in Gmail, logging the action for easy rollback.`
+                  : 'MailGraph will sync this action with your live mailbox (moving messages to Trash on Gmail/IMAP) and snapshot the original state in local storage. You can undo this operation at any time from the Audit Trail tab.'}
               </p>
 
               <div className="p-3 bg-bg-deep rounded border border-border-subtle space-y-1 font-mono text-[11px]">
                 <div className="text-slate-400">Target Query Summary:</div>
                 <div className="text-slate-200">• Category: {targetCategory || 'Any'}</div>
                 <div className="text-slate-200">• Age: Older than {daysOld} days</div>
-                <div className="text-slate-200">• Protected Messages: Excluded ({preview?.protected_excluded_count} shielded)</div>
+                {operationType === 'label' && (
+                  <div className="text-brand-light font-semibold">• Target Label: {labelName.trim()}</div>
+                )}
+                <div className="text-slate-200">
+                  • Protected Messages: Excluded ({preview?.protected_excluded_count} shielded)
+                </div>
+                {preview?.reversibility_note && (
+                  <div className="text-emerald-400">• Reversibility: {preview.reversibility_note}</div>
+                )}
               </div>
 
               {/* Real-time Progress Bar Card while executing cleanup */}
@@ -496,8 +662,11 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
                     variant={operationType === 'trash' ? 'danger' : 'primary'}
                     loading={executing}
                     onClick={handleExecuteOperation}
+                    icon={operationType === 'label' ? <Tag className="w-4 h-4" /> : undefined}
                   >
-                    Yes, {operationType === 'trash' ? 'Move' : 'Archive'} {preview?.target_count} Messages
+                    {operationType === 'label'
+                      ? `Apply Label "${labelName.trim()}" to ${preview?.target_count} Messages`
+                      : `Yes, ${operationType === 'trash' ? 'Move' : 'Archive'} ${preview?.target_count} Messages`}
                   </Button>
                 </div>
               )}

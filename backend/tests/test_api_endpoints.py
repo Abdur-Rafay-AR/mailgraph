@@ -391,5 +391,159 @@ def test_account_scoping_and_pause_exclusion():
     assert all(item["account_id"] == acc1_id for item in search_default["items"])
 
 
+def test_sync_labels_endpoints(client):
+    # Setup account and synthetic data
+    acc_res = client.post("/api/accounts/synthetic", json={"message_count": 10})
+    acc_id = acc_res.json()["account_id"]
+
+    # 1. Sync labels preview
+    prev_res = client.post(f"/api/accounts/{acc_id}/sync-labels/preview")
+    assert prev_res.status_code == 200
+    prev_data = prev_res.json()
+    assert "categories" in prev_data
+    assert "total_messages" in prev_data
+
+    # 2. Sync labels execute
+    exec_res = client.post(f"/api/accounts/{acc_id}/sync-labels/execute", json={})
+    assert exec_res.status_code == 200
+    exec_data = exec_res.json()
+    assert "batch_id" in exec_data
+    assert exec_data["labeled_count"] >= 0
+
+    # 3. Sync labels undo
+    undo_res = client.post(f"/api/accounts/{acc_id}/sync-labels/undo", json={"batch_id": exec_data["batch_id"]})
+    assert undo_res.status_code == 200
+    assert "undone_count" in undo_res.json()
+
+    # 4. Cleanup label preview and execute
+    clean_prev = client.post("/api/cleanup/preview", json={
+        "account_id": acc_id,
+        "operation_type": "label",
+        "label_name": "MailGraph/CustomTag",
+        "query": {"version": 1, "all": [], "any": [], "none": []}
+    })
+    assert clean_prev.status_code == 200
+    assert clean_prev.json()["operation_type"] == "label"
+
+    clean_exec = client.post("/api/cleanup/execute", json={
+        "account_id": acc_id,
+        "operation_type": "label",
+        "label_name": "MailGraph/CustomTag",
+        "query": {"version": 1, "all": [], "any": [], "none": []}
+    })
+    assert clean_exec.status_code == 200
+    assert clean_exec.json()["operation_type"] == "label"
+
+
+def test_sync_labels_paused_and_not_found(client):
+    # Missing account
+    missing_id = 999999
+    assert client.post(f"/api/accounts/{missing_id}/sync-labels/preview").status_code == 404
+    assert client.post(f"/api/accounts/{missing_id}/sync-labels/execute", json={}).status_code == 404
+    assert client.post(f"/api/accounts/{missing_id}/sync-labels/undo", json={"batch_id": "dummy"}).status_code == 404
+
+    # Create account and pause it
+    acc_res = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Paused Box",
+        "email_address": "paused@mailgraph.local",
+        "message_count": 5
+    })
+    acc_id = acc_res.json()["account_id"]
+    client.patch(f"/api/accounts/{acc_id}/status", json={"status": "paused"})
+
+    # Check paused account
+    assert client.post(f"/api/accounts/{acc_id}/sync-labels/preview").status_code == 400
+    assert client.post(f"/api/accounts/{acc_id}/sync-labels/execute", json={}).status_code == 400
+    assert client.post(f"/api/accounts/{acc_id}/sync-labels/undo", json={"batch_id": "dummy"}).status_code == 400
+
+
+def test_cross_account_batch_undo_isolated(client):
+    # Setup Account 1 and execute sync
+    acc1_res = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Account 1",
+        "email_address": "acc1@mailgraph.local",
+        "message_count": 10,
+        "seed": 101
+    })
+    acc1_id = acc1_res.json()["account_id"]
+    exec_res = client.post(f"/api/accounts/{acc1_id}/sync-labels/execute", json={})
+    assert exec_res.status_code == 200
+    b_id = exec_res.json()["batch_id"]
+    assert exec_res.json()["labeled_count"] > 0
+
+    # Setup Account 2
+    acc2_res = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Account 2",
+        "email_address": "acc2@mailgraph.local",
+        "message_count": 10,
+        "seed": 202
+    })
+    acc2_id = acc2_res.json()["account_id"]
+
+    # Attempt cross-account undo: Account 2 tries to undo Account 1's batch
+    undo2_res = client.post(f"/api/accounts/{acc2_id}/sync-labels/undo", json={"batch_id": b_id})
+    assert undo2_res.status_code == 200
+    assert undo2_res.json()["undone_count"] == 0
+    assert undo2_res.json()["operation_ids"] == []
+
+    # Verify Account 1 can undo its own batch
+    undo1_res = client.post(f"/api/accounts/{acc1_id}/sync-labels/undo", json={"batch_id": b_id})
+    assert undo1_res.status_code == 200
+    assert undo1_res.json()["undone_count"] > 0
+
+
+def test_cleanup_account_active_verification_and_undo_404(client):
+    # 1. Non-existent account_id -> 404
+    missing_prev = client.post("/api/cleanup/preview", json={
+        "account_id": 999999,
+        "operation_type": "trash",
+        "query": {"all": [], "any": [], "none": []}
+    })
+    assert missing_prev.status_code == 404
+
+    missing_exec = client.post("/api/cleanup/execute", json={
+        "account_id": 999999,
+        "operation_type": "trash",
+        "query": {"all": [], "any": [], "none": []}
+    })
+    assert missing_exec.status_code == 404
+
+    # 2. Paused account -> 400
+    acc_res = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Paused Cleanup",
+        "email_address": "paused_clean@local.box",
+        "message_count": 5
+    })
+    acc_id = acc_res.json()["account_id"]
+    client.patch(f"/api/accounts/{acc_id}/status", json={"status": "paused"})
+
+    paused_prev = client.post("/api/cleanup/preview", json={
+        "account_id": acc_id,
+        "operation_type": "trash",
+        "query": {"all": [], "any": [], "none": []}
+    })
+    assert paused_prev.status_code == 400
+
+    paused_exec = client.post("/api/cleanup/execute", json={
+        "account_id": acc_id,
+        "operation_type": "trash",
+        "query": {"all": [], "any": [], "none": []}
+    })
+    assert paused_exec.status_code == 400
+
+    # 3. Omitted account_id when all accounts are paused -> 404
+    omitted_prev = client.post("/api/cleanup/preview", json={
+        "operation_type": "trash",
+        "query": {"all": [], "any": [], "none": []}
+    })
+    assert omitted_prev.status_code == 404
+
+    # 4. Undo on non-existent operation_id returns 404 (not unhandled 500)
+    undo_res = client.post("/api/cleanup/undo", json={"operation_id": 999999})
+    assert undo_res.status_code == 404
+
+
+
+
 
 
