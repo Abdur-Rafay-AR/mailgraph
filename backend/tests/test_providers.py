@@ -431,6 +431,83 @@ def test_gmail_provider_list_labels():
         assert "INBOX" in labels
         assert "MailGraph/Finance" in labels
 
+def test_gmail_provider_remove_nonexistent_label_does_not_create():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+
+    with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+        # GET labels returns empty catalog
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"labels": []}
+        # batchModify returns 204
+        mock_post.return_value.status_code = 204
+
+        res = provider.apply_labels(["msg_1"], remove_labels=["MailGraph/NonExistent"])
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        # mock_post should only be called once for batchModify, NEVER for label creation
+        assert mock_post.call_count == 1
+        args, kwargs = mock_post.call_args
+        assert "batchModify" in args[0]
+        assert kwargs["json"]["removeLabelIds"] == []
+        assert kwargs["timeout"] == 30.0
+
+def test_gmail_provider_apply_labels_404_after_429():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+    provider._label_cache["MailGraph/Stale"] = "Label_Old"
+
+    with patch("requests.get") as mock_get, patch("requests.post") as mock_post, patch("time.sleep"):
+        # Attempt 0: 429 rate limit
+        resp_429 = MagicMock(status_code=429, text="Rate limit")
+        # Attempt 1: 404 not found (due to stale label ID)
+        resp_404 = MagicMock(status_code=404, text="Not found")
+        # Attempt 2: 204 success
+        resp_204 = MagicMock(status_code=204)
+        mock_post.side_effect = [resp_429, resp_404, resp_204]
+
+        # refresh_labels returns new label ID
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "labels": [{"id": "Label_Recovered", "name": "MailGraph/Stale"}]
+        }
+
+        res = provider.apply_labels(["msg_1"], add_labels=["MailGraph/Stale"])
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        assert mock_post.call_count == 3
+        # Third call must have used the updated Label_Recovered
+        third_call_kwargs = mock_post.call_args_list[2][1]
+        assert third_call_kwargs["json"]["addLabelIds"] == ["Label_Recovered"]
+
+def test_gmail_provider_apply_labels_connection_error_retry():
+    import requests
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+    provider._label_cache["MailGraph/Tag"] = "Label_Tag"
+
+    with patch("requests.post") as mock_post, patch("time.sleep") as mock_sleep:
+        # Attempt 0: ConnectionError; Attempt 1: 204 Success
+        resp_204 = MagicMock(status_code=204)
+        mock_post.side_effect = [requests.ConnectionError("Network down"), resp_204]
+
+        res = provider.apply_labels(["msg_1"], add_labels=["MailGraph/Tag"])
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once()
+
+def test_gmail_provider_apply_labels_no_labels_early_return():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+
+    with patch("requests.post") as mock_post:
+        res = provider.apply_labels(["msg_1", "msg_2"], add_labels=[], remove_labels=[])
+        assert res["status"] == "success"
+        assert res["count"] == 2
+        mock_post.assert_not_called()
+
+
 
 
 

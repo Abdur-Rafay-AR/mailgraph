@@ -1,8 +1,8 @@
 """Official Gmail API provider with OAuth loopback flow and least privilege scopes."""
 
 import json
-import base64
 import time
+import random
 from typing import Generator, List, Optional, Dict, Any
 import requests
 from backend.app.providers.base import AbstractMailProvider, ProviderCapabilities, ProviderFolder
@@ -80,7 +80,7 @@ class GmailProvider(AbstractMailProvider):
             raise ConnectionError(f"Account {self.account_email} is not authenticated with Gmail OAuth.")
         headers = self._get_headers()
         url = "https://gmail.googleapis.com/gmail/v1/users/me/labels"
-        resp = requests.get(url, headers=headers)
+        resp = requests.get(url, headers=headers, timeout=30.0)
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to fetch Gmail labels: {resp.status_code} {resp.text}")
         data = resp.json()
@@ -92,8 +92,8 @@ class GmailProvider(AbstractMailProvider):
         """List existing custom and system label names from Gmail."""
         return list(self.refresh_labels().keys())
 
-    def resolve_or_create_label_id(self, display_name: str) -> str:
-        """Resolve a human-readable label name to a Gmail label ID, creating it if needed."""
+    def resolve_or_create_label_id(self, display_name: str, create: bool = True) -> Optional[str]:
+        """Resolve a human-readable label name to a Gmail label ID, optionally creating it if missing."""
         if display_name in self._label_cache:
             return self._label_cache[display_name]
         if display_name in self._label_cache.values():
@@ -105,6 +105,9 @@ class GmailProvider(AbstractMailProvider):
         if display_name in self._label_cache.values():
             return display_name
 
+        if not create:
+            return None
+
         url = "https://gmail.googleapis.com/gmail/v1/users/me/labels"
         headers = self._get_headers()
         payload = {
@@ -112,7 +115,7 @@ class GmailProvider(AbstractMailProvider):
             "labelListVisibility": "labelShow",
             "messageListVisibility": "show"
         }
-        resp = requests.post(url, headers=headers, json=payload)
+        resp = requests.post(url, headers=headers, json=payload, timeout=30.0)
         if resp.status_code in (200, 201):
             created_label = resp.json()
             label_id = created_label["id"]
@@ -137,11 +140,22 @@ class GmailProvider(AbstractMailProvider):
         if not provider_message_ids:
             return {"status": "success", "count": 0}
 
+        if not add_labels and not remove_labels:
+            return {"status": "success", "count": len(provider_message_ids)}
+
         if not self.connect():
             raise ConnectionError(f"Account {self.account_email} is not authenticated with Gmail OAuth.")
 
-        add_ids = [self.resolve_or_create_label_id(lbl) for lbl in (add_labels or [])]
-        remove_ids = [self.resolve_or_create_label_id(lbl) for lbl in (remove_labels or [])]
+        add_ids = [
+            lbl_id
+            for lbl in (add_labels or [])
+            if (lbl_id := self.resolve_or_create_label_id(lbl, create=True)) is not None
+        ]
+        remove_ids = [
+            lbl_id
+            for lbl in (remove_labels or [])
+            if (lbl_id := self.resolve_or_create_label_id(lbl, create=False)) is not None
+        ]
 
         batch_size = 1000
         headers = self._get_headers()
@@ -156,23 +170,43 @@ class GmailProvider(AbstractMailProvider):
             }
             max_retries = 3
             backoff_base = 0.5
+            cache_busted = False
             success = False
             for attempt in range(max_retries + 1):
-                resp = requests.post(url, headers=headers, json=payload)
+                try:
+                    resp = requests.post(url, headers=headers, json=payload, timeout=30.0)
+                except (requests.ConnectionError, requests.Timeout) as ex:
+                    if attempt < max_retries:
+                        sleep_time = backoff_base * (2 ** attempt) + random.uniform(0.0, 0.25)
+                        time.sleep(sleep_time)
+                        continue
+                    else:
+                        raise RuntimeError(f"Gmail batchModify network error after {max_retries} retries: {ex}") from ex
+
                 if resp.status_code in (200, 204):
                     success = True
                     break
-                elif resp.status_code == 404 and attempt == 0:
+                elif resp.status_code == 404 and not cache_busted:
                     # Cache busting: refresh labels and re-resolve in case of stale label ID
+                    cache_busted = True
                     self.refresh_labels()
-                    add_ids = [self.resolve_or_create_label_id(lbl) for lbl in (add_labels or [])]
-                    remove_ids = [self.resolve_or_create_label_id(lbl) for lbl in (remove_labels or [])]
+                    add_ids = [
+                        lbl_id
+                        for lbl in (add_labels or [])
+                        if (lbl_id := self.resolve_or_create_label_id(lbl, create=True)) is not None
+                    ]
+                    remove_ids = [
+                        lbl_id
+                        for lbl in (remove_labels or [])
+                        if (lbl_id := self.resolve_or_create_label_id(lbl, create=False)) is not None
+                    ]
                     payload["addLabelIds"] = add_ids
                     payload["removeLabelIds"] = remove_ids
                     continue
                 elif resp.status_code in (429, 503):
                     if attempt < max_retries:
-                        time.sleep(backoff_base * (2 ** attempt))
+                        sleep_time = backoff_base * (2 ** attempt) + random.uniform(0.0, 0.25)
+                        time.sleep(sleep_time)
                         continue
                     else:
                         raise RuntimeError(f"Gmail batchModify failed due to rate limiting/overload: {resp.status_code} {resp.text}")
@@ -183,6 +217,7 @@ class GmailProvider(AbstractMailProvider):
                 raise RuntimeError("Gmail batchModify failed after all retry attempts.")
 
         return {"status": "success", "count": len(provider_message_ids)}
+
 
 
     def list_folders(self) -> List[ProviderFolder]:
