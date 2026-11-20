@@ -190,5 +190,45 @@ def test_imap_apply_labels_chunking():
     assert res["count"] == 150
     # Should have called uid STORE twice: chunk 1 (100) and chunk 2 (50)
     assert mock_client.uid.call_count == 2
+    chunk1_uids = ",".join(str(i) for i in range(1, 101))
+    chunk2_uids = ",".join(str(i) for i in range(101, 151))
+    mock_client.uid.assert_any_call("STORE", chunk1_uids, "+X-GM-LABELS", '("MailGraph/Bulk")')
+    mock_client.uid.assert_any_call("STORE", chunk2_uids, "+X-GM-LABELS", '("MailGraph/Bulk")')
+
+def test_imap_apply_labels_select_failure_raises_runtime_error():
+    provider = ImapProvider(host="imap.gmail.com", username="user@gmail.com", password="pwd")
+    mock_client = MagicMock()
+    provider.client = mock_client
+
+    mock_client.select.return_value = ("NO", [b"Folder does not exist"])
+    with pytest.raises(RuntimeError, match="Failed to select folder 'INBOX' in read-write mode"):
+        provider.apply_labels(["imap_INBOX_101"], add_labels=["MailGraph/Tag"])
+
+def test_imap_apply_labels_multi_folder_selection_and_status_checks():
+    provider = ImapProvider(host="imap.gmail.com", username="user@gmail.com", password="pwd")
+    mock_client = MagicMock()
+    provider.client = mock_client
+
+    mock_client.select.return_value = ("OK", [b"10"])
+    mock_client.response.return_value = ("OK", [b"55555"])
+    mock_client.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "MailGraph/Multi"'])
+    mock_client.uid.return_value = ("OK", [b"Success"])
+
+    res = provider.apply_labels(
+        ["imap_INBOX_101", "imap_Archive_201"],
+        add_labels=["MailGraph/Multi"],
+        expected_uidvalidity={"INBOX": "55555", "Archive": "55555"}
+    )
+    assert res["status"] == "success"
+    assert res["count"] == 2
+
+    # Verification that both folders were selected in Step 2 and re-selected in Step 4
+    select_calls = [c.args for c in mock_client.select.call_args_list]
+    assert ('"INBOX"',) in [c[:1] for c in select_calls]
+    assert ('"Archive"',) in [c[:1] for c in select_calls]
+
+    # Verify STORE was called for each folder's UID
+    mock_client.uid.assert_any_call("STORE", "101", "+X-GM-LABELS", '("MailGraph/Multi")')
+    mock_client.uid.assert_any_call("STORE", "201", "+X-GM-LABELS", '("MailGraph/Multi")')
 
 

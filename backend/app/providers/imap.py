@@ -462,6 +462,8 @@ class ImapProvider(AbstractMailProvider):
         # Step 2: For each folder, select read-write and verify UIDVALIDITY
         for folder in by_folder.keys():
             typ, data = self.client.select(f'"{folder}"', readonly=False)
+            if typ != "OK":
+                raise RuntimeError(f"Failed to select folder '{folder}' in read-write mode")
             actual_uidval = self._extract_uidvalidity(data)
             if expected_uidvalidity and folder in expected_uidvalidity:
                 expected = str(expected_uidvalidity[folder])
@@ -483,11 +485,13 @@ class ImapProvider(AbstractMailProvider):
 
         # Step 4: In chunks of 100 UIDs, apply / remove labels
         total_uids = 0
-        currently_selected = folder if len(by_folder) == 1 else None
+        currently_selected = next(iter(by_folder)) if len(by_folder) == 1 else None
 
         for folder, uids in by_folder.items():
             if currently_selected != folder:
-                self.client.select(f'"{folder}"', readonly=False)
+                typ, _ = self.client.select(f'"{folder}"', readonly=False)
+                if typ != "OK":
+                    raise RuntimeError(f"Failed to select folder '{folder}' in read-write mode")
                 currently_selected = folder
 
             total_uids += len(uids)
