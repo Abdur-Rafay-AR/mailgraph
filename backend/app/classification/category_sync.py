@@ -166,21 +166,35 @@ class CategoryLabelSyncService:
             "labeled_count": total_labeled
         }
 
-    def undo_batch(self, batch_id: str, sync_remote: bool = True) -> Dict[str, Any]:
+    def undo_batch(
+        self,
+        batch_id: str,
+        sync_remote: bool = True,
+        account_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Undo all operations linked to a specific batch_id by removing applied labels.
+        When account_id is provided, only undo operations belonging to that account.
         """
         if not batch_id or not isinstance(batch_id, str) or not batch_id.strip():
             return {"batch_id": batch_id, "undone_count": 0, "operation_ids": []}
 
         with self.db.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, query_snapshot_json, status
-                FROM operations
-                WHERE query_snapshot_json LIKE '%' || ? || '%'
-                ORDER BY id ASC;
-            """, (batch_id,))
+            if account_id is not None:
+                cursor.execute("""
+                    SELECT id, query_snapshot_json, status
+                    FROM operations
+                    WHERE account_id = ? AND query_snapshot_json LIKE '%' || ? || '%'
+                    ORDER BY id ASC;
+                """, (account_id, batch_id))
+            else:
+                cursor.execute("""
+                    SELECT id, query_snapshot_json, status
+                    FROM operations
+                    WHERE query_snapshot_json LIKE '%' || ? || '%'
+                    ORDER BY id ASC;
+                """, (batch_id,))
             rows = cursor.fetchall()
 
         matching_op_ids: List[int] = []

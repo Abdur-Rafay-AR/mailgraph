@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import sqlite3
 from typing import List, Dict, Any, Optional
 
-from backend.app.db.database import get_db, get_database
+from backend.app.db.database import Database, get_db, get_database
 from backend.app.models.schemas import (
     AccountCreate,
     AccountResponse,
@@ -334,7 +334,7 @@ def stop_active_sync():
     return {"status": "stopping" if stopped else "no_active_job"}
 
 
-def _verify_account_active(account_id: int, db) -> Dict[str, Any]:
+def _verify_account_active(account_id: int, db: Database) -> Dict[str, Any]:
     with db.connect() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, status FROM accounts WHERE id = ?;", (account_id,))
@@ -372,5 +372,5 @@ def undo_category_label_sync(account_id: int, req: CategorySyncUndoRequest):
     db = get_database()
     _verify_account_active(account_id, db)
     service = CategoryLabelSyncService(db)
-    return service.undo_batch(req.batch_id)
+    return service.undo_batch(req.batch_id, account_id=account_id)
 
