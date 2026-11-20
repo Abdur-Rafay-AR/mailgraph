@@ -55,3 +55,16 @@ class AbstractMailProvider(ABC):
     def restore_messages(self, provider_message_ids: List[str]) -> Dict[str, Any]:
         """Restore messages from trash or archive."""
         raise NotImplementedError("Restore not supported by this provider.")
+
+    def apply_labels(
+        self,
+        provider_message_ids: List[str],
+        add_labels: Optional[List[str]] = None,
+        remove_labels: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Apply or remove labels on target messages on the remote server."""
+        raise NotImplementedError("Label manipulation not supported by this provider.")
+
+    def list_labels(self) -> List[str]:
+        """List existing custom and system labels from the provider."""
+        return []
