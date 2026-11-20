@@ -36,7 +36,8 @@ This design specification details the architecture for **Gmail Labeling and Tagg
 +------------------------------------+        +---------------------------------+
 |     CategoryLabelSyncService       |        |          ActionEngine           |
 | - Resolves classified messages     |        | - Query AST target evaluation   |
-| - Groups by category mapping       |        | - Simulation preview & safeguards|
+| - Groups by category mapping       |        | - Protection rules enforcement  |
+| - Per-category operation logging   |        | - Simulation preview & safeguards|
 | - High-throughput batch dispatcher |        | - Audit logging & Undo records  |
 +------------------------------------+        +---------------------------------+
                  \                                              /
@@ -48,9 +49,10 @@ This design specification details the architecture for **Gmail Labeling and Tagg
 |                                                                               |
 |       +--------------------------------+   +------------------------------+   |
 |       |         ImapProvider           |   |        GmailProvider         |   |
-|       | - Ensures mailbox exists       |   | - users.labels.create()      |   |
+|       | - Gated read-write capability  |   | - Fresh name->ID resolution  |   |
+|       | - UIDVALIDITY verification     |   | - Cache busting on 404/409   |   |
 |       | - STORE +X-GM-LABELS /         |   | - users.messages.            |   |
-|       |   STORE -X-GM-LABELS           |   |   batchModify()              |   |
+|       |   STORE -X-GM-LABELS           |   |   batchModify(1,000 IDs max) |   |
 |       | - Chunks of 100 UIDs           |   | - Exponential backoff        |   |
 |       +--------------------------------+   +------------------------------+   |
 +-------------------------------------------------------------------------------+
@@ -61,10 +63,24 @@ This design specification details the architecture for **Gmail Labeling and Tagg
 
 ---
 
-## 3. Provider Layer Implementation
+## 3. Security, Privacy & Stated Capability Changes
 
-### 3.1 Interface Expansion (`backend/app/providers/base.py`)
-Extend `AbstractMailProvider` with methods for label inspection and mutation:
+### 3.1 IMAP Capability Transition: Read-Only to Explicit Gated Mutation
+- **Explicit Capability Declaration**: The existing IMAP ingestion pipeline operates in strict read-only mode (`readonly=True` during `EXAMINE` or `SELECT`). Labeling requires issuing `STORE +X-GM-LABELS`, which mandates selecting the target mailbox with `readonly=False`.
+- **Gating Mechanism**: The IMAP client will **never** open a mailbox in read-write mode during ingestion, search, or background scanning. Read-write selection is strictly isolated within `apply_labels()` and is only invoked when an action has been explicitly confirmed by the user.
+- **Safety Boundary**: The provider will only ever issue `STORE +X-GM-LABELS` or `STORE -X-GM-LABELS`. It is programmatically barred from issuing `STORE +FLAGS (\Deleted)` or `EXPUNGE` during label mutations.
+
+### 3.2 OAuth Scope Escalation (`gmail.modify`) & Consent UX
+- Connecting via Google OAuth previously requested `READONLY_SCOPE` (`https://www.googleapis.com/auth/gmail.readonly`). Applying labels requires `MODIFY_SCOPE` (`https://www.googleapis.com/auth/gmail.modify`).
+- **UI Consent Notice**: When a user initiates Gmail OAuth connection or attempts to use labeling with an existing read-only token, the UI presents an explicit dialog:
+  > *"To organize your inbox, MailGraph requires permission to create and apply labels in your Gmail account. MailGraph runs 100% locally on your computer—your emails and credentials never leave this machine."*
+- If an existing account only has `readonly` authorization, labeling triggers a prompt to re-authenticate with write consent.
+
+---
+
+## 4. Provider Layer Implementation
+
+### 4.1 Interface Expansion (`backend/app/providers/base.py`)
 ```python
 def apply_labels(
     self,
@@ -81,62 +97,82 @@ def list_labels(self) -> List[str]:
 ```
 Update `ProviderCapabilities(supports_labels=True)`.
 
-### 3.2 IMAP Implementation (`backend/app/providers/imap.py`)
+### 4.2 IMAP Implementation (`backend/app/providers/imap.py`)
 When connecting to Gmail via IMAP (`imap.gmail.com` with App Password):
-1. **Label Creation / Verification**:
-   - Check if folder/label exists via `list(pattern=f'"{label_name}"')`.
-   - If not found, create via `client.create(f'"{label_name}"')`.
-   - Gmail automatically exposes created folders as Gmail labels and respects hierarchical slashes (`MailGraph/Finance`).
-2. **Applying Labels (`+X-GM-LABELS`)**:
-   - Parse UIDs and active folders from `provider_message_ids` (format: `imap_<folder>_<uid>`).
-   - Group by folder and select the folder in read-write mode (`client.select(f'"{folder}"', readonly=False)`).
-   - In chunks of 100 UIDs:
-     ```python
-     uid_set = ",".join(chunk)
-     for lbl in add_labels:
-         # Escape label name in quotes
-         client.uid("STORE", uid_set, "+X-GM-LABELS", f'("{lbl}")')
-     ```
-3. **Removing Labels (`-X-GM-LABELS` for Undo)**:
-   - For undoing:
-     ```python
-     for lbl in remove_labels:
-         client.uid("STORE", uid_set, "-X-GM-LABELS", f'("{lbl}")')
-     ```
-4. **Safety**: Never modifies message flags (`\Seen`, `\Deleted`), never executes `EXPUNGE`, and never removes messages from `INBOX`.
 
-### 3.3 Gmail REST API Implementation (`backend/app/providers/gmail.py`)
-1. **OAuth Scopes**:
-   - Update default scope in `scripts/connect_gmail.py` and `backend/app/providers/gmail.py` to `MODIFY_SCOPE` (`https://www.googleapis.com/auth/gmail.modify`).
-2. **Label Resolution**:
-   - Cache Gmail labels via `GET https://gmail.googleapis.com/gmail/v1/users/me/labels`.
-   - If `MailGraph/Category` label does not exist, create via `POST https://gmail.googleapis.com/gmail/v1/users/me/labels` with `{"name": "MailGraph/...", "labelListVisibility": "labelShow", "messageListVisibility": "show"}`.
-3. **Batch Modification**:
-   - Call `POST https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify` with:
-     ```json
-     {
-       "ids": ["msg_id_1", "msg_id_2", ...],
-       "addLabelIds": [label_id],
-       "removeLabelIds": []
-     }
-     ```
-   - Chunks of up to 1,000 message IDs with exponential backoff on HTTP 429/503.
+#### A. UIDVALIDITY Verification (Preventing Silent Mislabeling)
+IMAP UIDs are strictly valid only within a specific mailbox's `UIDVALIDITY` generation value.
+1. During initial ingestion, MailGraph stores `uidvalidity` in the `folders` table alongside `provider_folder_id`.
+2. Before executing any `UID STORE` in `apply_labels()`:
+   - Select the target folder in read-write mode: `typ, data = self.client.select(f'"{folder}"', readonly=False)`
+   - Parse `UIDVALIDITY` from response: `res, val = self.client.response("UIDVALIDITY")` or regex match `[UIDVALIDITY <value>]`.
+   - Compare with stored `uidvalidity`. If there is a mismatch (indicating UIDs were invalidated by the server), the operation **aborts immediately** with a `UIDValidityChangedError` and prompts the user to refresh their folder index.
+
+#### B. Label Creation & Sanitization
+- Check if folder/label exists via `list(pattern=f'"{label_name}"')`.
+- If missing, create via `client.create(f'"{label_name}"')`.
+- Gmail automatically exposes created folders as Gmail labels and respects hierarchical slashes (`MailGraph/Finance`).
+
+#### C. Applying Labels (`+X-GM-LABELS`) & Removing (`-X-GM-LABELS`)
+- Parse UIDs and active folders from `provider_message_ids` (format: `imap_<folder>_<uid>`).
+- Group by folder, verify `UIDVALIDITY`, and process in chunks of **100 UIDs** (to prevent command-line buffer overflows).
+  ```python
+  uid_set = ",".join(chunk)
+  for lbl in add_labels:
+      self.client.uid("STORE", uid_set, "+X-GM-LABELS", f'("{lbl}")')
+  ```
+- For undoing:
+  ```python
+  for lbl in remove_labels:
+      self.client.uid("STORE", uid_set, "-X-GM-LABELS", f'("{lbl}")')
+  ```
+
+### 4.3 Gmail REST API Implementation (`backend/app/providers/gmail.py`)
+
+#### A. Fresh Name &rarr; Label ID Resolution & Cache Busting
+`batchModify` requires Google label IDs (e.g. `Label_142`), not display names.
+1. `resolve_or_create_label_id(display_name: str) -> str`:
+   - Checks local cache of `{display_name: label_id}`.
+   - If not in cache or if a previous call returned 404, queries `GET https://gmail.googleapis.com/gmail/v1/users/me/labels` to refresh the label catalog.
+   - If label name does not exist on Gmail:
+     - Issues `POST https://gmail.googleapis.com/gmail/v1/users/me/labels` with `{"name": display_name, "labelListVisibility": "labelShow", "messageListVisibility": "show"}`.
+     - On HTTP 409 (Conflict/Already Exists - user created label concurrently in web): forces a fresh cache refresh from `GET .../labels` and grabs the newly detected label ID.
+   - Returns the verified Google `label_id`.
+
+#### B. Batch Modification & Rate Limiting
+- Chunks message IDs into **up to 1,000 IDs per request** (Gmail API's official maximum for `batchModify`).
+- Payload structure:
+  ```json
+  {
+    "ids": ["msg_id_1", "msg_id_2", ...],
+    "addLabelIds": ["Label_142"],
+    "removeLabelIds": []
+  }
+  ```
+- Implements exponential backoff with jitter on HTTP 429 (rate limit) or 503 (backend overload).
 
 ---
 
-## 4. ActionEngine & Safe Operations
+## 5. ActionEngine & Safe Operations
 
-### 4.1 Schema & Operation Types (`backend/app/actions/engine.py`)
-Extend `ActionEngine` to support `operation_type == "label"`:
+### 5.1 Enforcement of Protection Rules
+In `backend/app/actions/engine.py`:
+- By default, all operations enforce `exclude_protected=True`.
+- When querying targets for `operation_type="label"`:
+  - Query compilation automatically joins active `protection_rules` (e.g. `no-reply@accounts.google.com`, `apple.com`, `github.com`, and starred senders marked as protected).
+  - Protected messages are strictly filtered out of the target set.
+  - The preview calculation explicitly reports `protected_excluded_count`. If a user attempts to label protected messages, they are notified that protected contacts have been safeguarded and will not be labeled unless explicitly unshielded.
+
+### 5.2 Label Operations, Idempotency & Undo
 - **`calculate_preview(account_id, operation_type, ast, label_name=None)`**:
   - Compiles the AST to find all target messages.
-  - Calculates count, total size bytes, distinct thread count, protected messages excluded, and top senders.
+  - Returns target count, total size bytes, distinct thread count, protected exclusions, and top senders.
   - Returns `reversibility_note="Reversible: Labels can be completely removed using the Undo button."` and `reversible=True`.
 - **`execute_action(account_id, operation_type, ast, label_name=None, sync_remote=True)`**:
   - Validates `label_name` is non-empty.
   - Inserts row in `operations` table (`operation_type='label'`).
-  - For each message, records `operation_items`:
-    - `original_state_json`: records current label state or `{}`.
+  - Records each target in `operation_items`:
+    - `original_state_json`: `{}`.
     - `result_state_json`: `{"added_label": label_name}`.
   - Dispatches remote call to `remote_provider.apply_labels(target_pids, add_labels=[label_name])`.
 - **`undo_operation(operation_id)`**:
@@ -147,9 +183,9 @@ Extend `ActionEngine` to support `operation_type == "label"`:
 
 ---
 
-## 5. 1-Click Category Sync Service
+## 6. 1-Click Category Sync Service
 
-### 5.1 Mapping Rules (`backend/app/classification/category_sync.py`)
+### 6.1 Category Mapping Rules (`backend/app/classification/category_sync.py`)
 Maps MailGraph's 16 local categories to human-friendly Gmail nested labels:
 
 | MailGraph Category | Gmail Label |
@@ -168,27 +204,31 @@ Maps MailGraph's 16 local categories to human-friendly Gmail nested labels:
 | `automated_report` | `MailGraph/Reports` |
 | `cold_outreach` | `MailGraph/Cold Outreach` |
 
-### 5.2 Workflow
-1. **Preview**:
-   - Queries `SELECT c.name, COUNT(mc.message_id) FROM message_categories mc JOIN categories c ON mc.category_id = c.id JOIN messages m ON mc.message_id = m.id WHERE m.account_id = ? GROUP BY c.name;`
-   - Returns a structured preview: categories list, corresponding Gmail label names, and message count per label.
-2. **Execute**:
-   - Iterates through categories, fetching provider message IDs.
-   - Applies the corresponding `MailGraph/<Name>` label via `remote_provider.apply_labels()`.
-   - Records an aggregate operation entry in `operations` so the sync operation is fully auditable and undoable.
+### 6.2 Granular Undo Architecture & Batch Linking
+To ensure users are not forced into an all-or-nothing undo:
+- When a user triggers **Category Sync**, a unique `batch_sync_id` (UUID) is generated.
+- MailGraph executes the sync per-category and records **one distinct record in the `operations` table per category** (e.g., `operation_type='label'`, `label_name='MailGraph/Finance'`, query snapshot, `batch_id=batch_sync_id`).
+- **Granular Undo**: The user can selectively undo just one category (e.g. undo `MailGraph/Promotional` while keeping `MailGraph/Finance` and `MailGraph/Receipts`).
+- **Batch Undo**: The user can also click "Undo Entire Sync" which restores all operations associated with that `batch_sync_id`.
+
+### 6.3 Idempotency & Partial Execution Resume
+- Before dispatching label additions, MailGraph checks `operation_items` for messages that already have a successful `'label'` operation recorded with the target label.
+- If a sync is interrupted mid-batch (e.g., laptop sleep, network drop, server restart):
+  - On restart/resume, the service queries already-labeled items and only processes the remaining un-synced delta.
+  - No duplicate requests are sent to Gmail.
 
 ---
 
-## 6. API Endpoints
+## 7. API Endpoints
 
 1. `POST /api/cleanup/preview`:
-   - Extends payload with `label_name: Optional[str]`.
-   - Allows previewing cleanup actions with `operation_type="label"`.
+   - Payload: `CleanupPreviewRequest` with `operation_type="label"` and `label_name: str`.
+   - Returns preview metrics with protected exclusions.
 2. `POST /api/cleanup/execute`:
-   - Extends payload with `label_name: Optional[str]`.
-   - Executes label operation across query-matched messages.
+   - Payload: `CleanupExecuteRequest` with `operation_type="label"` and `label_name: str`.
+   - Executes label operation across query-matched messages and logs undoable audit trail.
 3. `POST /api/accounts/{account_id}/sync-labels/preview`:
-   - Returns JSON:
+   - Returns JSON breakdown:
      ```json
      {
        "account_id": 1,
@@ -201,56 +241,45 @@ Maps MailGraph's 16 local categories to human-friendly Gmail nested labels:
      }
      ```
 4. `POST /api/accounts/{account_id}/sync-labels/execute`:
+   - Body: `{"categories": ["finance", "newsletter", ...], "batch_id": Optional[str]}`
    - Triggers batch labeling across selected categories.
-   - Returns operation details (`operation_id`, `labeled_count`, `categories_synced`).
+   - Returns list of created `operation_ids` per category and sync summary.
 5. `GET /api/accounts/{account_id}/labels`:
-   - Returns existing labels in the user's Gmail account.
+   - Returns current labels in the user's Gmail account.
 
 ---
 
-## 7. Frontend User Experience
+## 8. Frontend User Experience
 
-### 7.1 Cleanup Studio (`apps/desktop/src/features/cleanup`)
+### 8.1 Cleanup Studio (`apps/desktop/src/features/cleanup`)
 - Adds a third action pill/tab: **"Apply Label"** (joining "Move to Trash" and "Archive").
-- When selected:
-  - Label Input: Dropdown populated with standard suggestions (`MailGraph/Finance`, `MailGraph/Receipts`, etc.) with an input field to type any custom label name.
-  - Real-time simulation preview showing:
-    - Target count & total size.
-    - Protected messages excluded.
-    - Top senders affected.
-    - Representative message samples.
-  - Action button: `Apply Label 'MailGraph/Finance' to 342 Messages`.
-  - Audit log at the bottom displays past label operations with a 1-click **Undo** button.
+- Label selector: Suggests `MailGraph/<Category>` presets with custom input support.
+- Real-time simulation preview showing target count, storage size, protected exclusions, and samples.
+- Action button: `Apply Label 'MailGraph/Finance' to 342 Messages`.
+- Audit log includes 1-click **Undo** to remove applied labels from Gmail.
 
-### 7.2 Overview Page (`apps/desktop/src/features/overview`)
+### 8.2 Overview Page (`apps/desktop/src/features/overview`)
 - Adds a **"Gmail Category Sync"** banner card:
   - Summarizes detected intelligence: *"MailGraph has categorized 1,420 messages across 6 categories."*
   - Action button: `Sync Categories to Gmail`.
-  - Clicking opens a breakdown modal showing each category, its count, and target Gmail label, with a `Confirm & Sync` button.
-  - Progress bar displays real-time sync progress (`Syncing: 450/1,420 (31%)`).
+  - Preview modal with category checklist toggles (choose which categories to sync).
+  - Progress bar displaying real-time sync progress (`Syncing Finance: 150/320 (47%)`).
 
-### 7.3 Message Explorer (`apps/desktop/src/features/messages`)
+### 8.3 Message Explorer (`apps/desktop/src/features/messages`)
 - Toolbar includes a `Tag in Gmail` dropdown button.
-- Applies a selected or custom label directly to all messages matching the current search filters.
-
----
-
-## 8. Safety, Reversibility & Error Handling
-
-1. **Non-Destructive**: Labeling only adds tags; it never removes messages from the Inbox, never deletes messages, and never modifies subject or body.
-2. **Chunking & Throttling**: Batch size limited to 100 UIDs for IMAP and 500 IDs for Gmail REST API to avoid buffer and rate limits.
-3. **Resilience**: If IMAP disconnects, the provider reconnects and retries the failed chunk.
-4. **Complete Undoability**: All label applications log `operation_items` mapping each message ID to the applied label, allowing instant bulk undo via `STORE -X-GM-LABELS`.
-5. **Protection Rules**: Safeguards are strictly applied so protected contacts (e.g. Google security notifications) are never mislabeled or modified without explicit user choice.
+- Applies a selected or custom label directly to all messages matching current search filters.
 
 ---
 
 ## 9. Verification & Testing
 
 1. **Backend Tests**:
-   - `test_actions_engine.py`: Test preview, execution, and undo for `label` operation type.
-   - `test_providers.py`: Mock IMAP client testing `client.create()` and `STORE +X-GM-LABELS` / `-X-GM-LABELS`.
-   - `test_category_sync.py`: Unit test category mapping, preview aggregation, and chunked execution.
+   - `test_actions_engine.py`: Test preview, execution, protected contact shielding, and undo for `label` operation type.
+   - `test_providers.py`:
+     - Test IMAP UIDVALIDITY mismatch detection and error abort.
+     - Mock IMAP client testing `client.create()` and `STORE +X-GM-LABELS` / `-X-GM-LABELS`.
+     - Test Gmail API fresh name &rarr; ID resolution, cache refresh on 404/409, and `batchModify` with 1,000 chunk limit.
+   - `test_category_sync.py`: Unit test category mapping, granular per-category operation generation, resume on partial failure, and batch undo.
    - `test_api_endpoints.py`: Integration test for all new endpoints (`/api/accounts/{id}/sync-labels/*`, `/api/cleanup/*`).
 2. **Frontend Build & UI Check**:
    - Run `npm run build` in `apps/desktop` to ensure TypeScript compilation and zero build warnings.
