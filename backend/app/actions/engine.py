@@ -45,6 +45,10 @@ class ActionEngine:
             raise ValueError(f"Unsupported operation type '{operation_type}'.")
             
         ast.account_ids = [account_id]
+        if operation_type == "label":
+            ast.exclude_protected = True
+        elif ast.exclude_protected is None:
+            ast.exclude_protected = True
         
         with self.db.connect() as conn:
             cursor = conn.cursor()
@@ -186,6 +190,7 @@ class ActionEngine:
         operation_type: str,
         ast: QueryAST,
         label_name: Optional[str] = None,
+        batch_id: Optional[str] = None,
         sync_remote: bool = True
     ) -> int:
         """
@@ -212,6 +217,8 @@ class ActionEngine:
         }
         if label_name:
             snapshot_dict["label_name"] = label_name
+        if batch_id:
+            snapshot_dict["batch_id"] = batch_id
         query_snapshot = json.dumps(snapshot_dict)
         
         with self.db.connect() as conn:
@@ -255,7 +262,7 @@ class ActionEngine:
             for r in target_rows:
                 msg_id = r["id"]
                 orig_folder_id = r["folder_id"]
-                pid = r["provider_message_id"]
+                pid = r["provider_message_id"] or ""
                 
                 try:
                     if operation_type == "label":
@@ -321,7 +328,7 @@ class ActionEngine:
             
             return operation_id
 
-    def undo_operation(self, operation_id: int) -> Dict[str, Any]:
+    def undo_operation(self, operation_id: int, sync_remote: bool = True) -> Dict[str, Any]:
         """Undo a previously executed operation by restoring original message folder state or removing labels."""
         with self.db.connect() as conn:
             cursor = conn.cursor()
@@ -363,17 +370,18 @@ class ActionEngine:
                     WHERE id = ?;
                 """, (operation_id,))
 
-                # Attempt remote label removal on live server if supported
-                remote_provider = self._get_remote_provider(account_id)
-                if remote_provider:
-                    try:
-                        for added_lbl, pids in labels_to_pids.items():
-                            remote_provider.apply_labels(pids, remove_labels=[added_lbl])
-                    except Exception as ex:
-                        print(f"Warning: remote label removal failed: {ex}")
-                    finally:
-                        if hasattr(remote_provider, "disconnect"):
-                            remote_provider.disconnect()
+                if sync_remote:
+                    # Attempt remote label removal on live server if supported
+                    remote_provider = self._get_remote_provider(account_id)
+                    if remote_provider:
+                        try:
+                            for added_lbl, pids in labels_to_pids.items():
+                                remote_provider.apply_labels(pids, remove_labels=[added_lbl])
+                        except Exception as ex:
+                            print(f"Warning: remote label removal failed: {ex}")
+                        finally:
+                            if hasattr(remote_provider, "disconnect"):
+                                remote_provider.disconnect()
             else:
                 for item in items:
                     item_id = item["id"]
@@ -396,17 +404,18 @@ class ActionEngine:
                     WHERE id = ?;
                 """, (operation_id,))
 
-                # Attempt remote undo on live server if supported
-                remote_provider = self._get_remote_provider(account_id)
-                if remote_provider and op_type == "trash":
-                    try:
-                        pids = [r["provider_message_id"] for r in items if r["provider_message_id"]]
-                        remote_provider.restore_messages(pids, dest_folder="INBOX")
-                    except Exception as ex:
-                        print(f"Warning: remote restore failed: {ex}")
-                    finally:
-                        if hasattr(remote_provider, "disconnect"):
-                            remote_provider.disconnect()
+                if sync_remote:
+                    # Attempt remote undo on live server if supported
+                    remote_provider = self._get_remote_provider(account_id)
+                    if remote_provider and op_type == "trash":
+                        try:
+                            pids = [r["provider_message_id"] for r in items if r["provider_message_id"]]
+                            remote_provider.restore_messages(pids, dest_folder="INBOX")
+                        except Exception as ex:
+                            print(f"Warning: remote restore failed: {ex}")
+                        finally:
+                            if hasattr(remote_provider, "disconnect"):
+                                remote_provider.disconnect()
             
             return {
                 "operation_id": operation_id,

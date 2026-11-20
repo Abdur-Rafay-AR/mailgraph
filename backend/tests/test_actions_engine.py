@@ -1,3 +1,5 @@
+import json
+from unittest.mock import MagicMock
 import pytest
 from backend.app.db.database import Database
 from backend.app.db.migrations import run_migrations
@@ -61,10 +63,6 @@ def test_preview_and_execute_trash_operation():
 
 
 def test_label_preview_execution_and_undo(tmp_path):
-    from backend.app.db.database import Database
-    from backend.app.actions.engine import ActionEngine
-    from backend.app.search.query_compiler import QueryAST
-
     db = Database(str(tmp_path / "test.db"))
     db.initialize()
     
@@ -90,6 +88,12 @@ def test_label_preview_execution_and_undo(tmp_path):
     assert preview.protected_excluded_count == 1
     assert preview.reversible is True
 
+    # Also test preview with exclude_protected=False: normalization must enforce exclude_protected=True for label
+    ast_unsafe = QueryAST(version=1, exclude_protected=False)
+    preview_unsafe = engine.calculate_preview(account_id=1, operation_type="label", ast=ast_unsafe, label_name="MailGraph/Newsletters")
+    assert preview_unsafe.target_count == 1
+    assert preview_unsafe.protected_excluded_count == 1
+
     # 2. Execute
     op_id = engine.execute_action(account_id=1, operation_type="label", ast=ast, label_name="MailGraph/Newsletters", sync_remote=False)
     assert op_id > 0
@@ -99,7 +103,6 @@ def test_label_preview_execution_and_undo(tmp_path):
         assert row["status"] == "completed"
         assert row["completed_count"] == 1
         item = conn.execute("SELECT result_state_json FROM operation_items WHERE operation_id = ?;", (op_id,)).fetchone()
-        import json
         assert json.loads(item["result_state_json"]).get("added_label") == "MailGraph/Newsletters"
 
     # 3. Undo
@@ -110,10 +113,6 @@ def test_label_preview_execution_and_undo(tmp_path):
 
 def test_label_realtime_protection_revalidation(tmp_path):
     """Verify that protection added after preview is enforced at execution time."""
-    from backend.app.db.database import Database
-    from backend.app.actions.engine import ActionEngine
-    from backend.app.search.query_compiler import QueryAST
-
     db = Database(str(tmp_path / "test_revalidation.db"))
     db.initialize()
 
@@ -160,11 +159,6 @@ def test_label_realtime_protection_revalidation(tmp_path):
 
 def test_label_remote_sync_and_undo(tmp_path, monkeypatch):
     """Verify that remote provider apply_labels is invoked on execute and undo."""
-    from unittest.mock import MagicMock
-    from backend.app.db.database import Database
-    from backend.app.actions.engine import ActionEngine
-    from backend.app.search.query_compiler import QueryAST
-
     db = Database(str(tmp_path / "test_remote.db"))
     db.initialize()
 
@@ -188,18 +182,51 @@ def test_label_remote_sync_and_undo(tmp_path, monkeypatch):
 
     # Undo with remote sync enabled
     mock_provider.reset_mock()
-    undo_res = engine.undo_operation(op_id)
+    undo_res = engine.undo_operation(op_id, sync_remote=True)
     assert undo_res["status"] == "undone"
     assert mock_provider.apply_labels.called
     mock_provider.apply_labels.assert_called_with(["p_remote_1"], remove_labels=["MailGraph/Promotional"])
 
+    # Undo with sync_remote=False should NOT invoke remote provider
+    mock_provider.reset_mock()
+    undo_res_no_sync = engine.undo_operation(op_id, sync_remote=False)
+    assert undo_res_no_sync["status"] == "undone"
+    assert not mock_provider.apply_labels.called
+
+
+def test_label_batch_id_and_snapshot(tmp_path):
+    """Verify that batch_id is captured in query_snapshot_json when provided."""
+    db = Database(str(tmp_path / "test_batch.db"))
+    db.initialize()
+
+    with db.connect() as conn:
+        conn.execute("INSERT INTO accounts (id, provider, display_name, email_address) VALUES (1, 'synthetic', 'Test', 't@e.com');")
+        conn.execute("INSERT INTO folders (id, account_id, provider_folder_id, name) VALUES (1, 1, 'INBOX', 'INBOX');")
+        conn.execute("INSERT INTO senders (id, normalized_address, domain, is_protected) VALUES (1, 'test@box.com', 'box.com', 0);")
+        conn.execute("INSERT INTO messages (id, account_id, provider_message_id, folder_id, sender_id, sender_address, received_at) VALUES (1, 1, 'p_b1', 1, 1, 'test@box.com', '2026-01-01');")
+
+    engine = ActionEngine(db)
+    ast = QueryAST(version=1)
+
+    op_id = engine.execute_action(
+        account_id=1,
+        operation_type="label",
+        ast=ast,
+        label_name="MailGraph/Finance",
+        batch_id="batch-uuid-123",
+        sync_remote=False
+    )
+    assert op_id > 0
+
+    with db.connect() as conn:
+        row = conn.execute("SELECT query_snapshot_json FROM operations WHERE id = ?;", (op_id,)).fetchone()
+        snapshot = json.loads(row["query_snapshot_json"])
+        assert snapshot.get("batch_id") == "batch-uuid-123"
+        assert snapshot.get("label_name") == "MailGraph/Finance"
+
 
 def test_label_validation_errors(tmp_path):
     """Verify validation errors for missing label_name and invalid operation_type."""
-    from backend.app.db.database import Database
-    from backend.app.actions.engine import ActionEngine
-    from backend.app.search.query_compiler import QueryAST
-
     db = Database(str(tmp_path / "test_err.db"))
     db.initialize()
     engine = ActionEngine(db)
@@ -219,5 +246,6 @@ def test_label_validation_errors(tmp_path):
     # Unsupported operation_type in execute
     with pytest.raises(ValueError, match="Unsupported operation type"):
         engine.execute_action(account_id=1, operation_type="unknown_op", ast=ast)
+
 
 
