@@ -186,7 +186,7 @@ export interface GraphResponse {
 }
 
 export interface CleanupPreview {
-  operation_type: 'trash' | 'archive';
+  operation_type: 'trash' | 'archive' | 'label';
   account_id: number;
   target_count: number;
   affected_threads_count: number;
@@ -293,4 +293,13 @@ export interface SyncJob {
   email_address: string;
   is_all: boolean;
 }
+
+export type {
+  CategorySyncItem,
+  CategorySyncPreview,
+  CategorySyncExecuteResponse,
+  CategorySyncUndoResponse,
+  CleanupPreviewParams,
+  CleanupExecuteParams,
+} from './index';
 
