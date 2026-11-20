@@ -32,6 +32,7 @@ def test_imap_provider_capabilities():
     assert caps.provider_name == "imap"
     assert caps.supports_trash is True
     assert caps.supports_archive is True
+    assert caps.supports_labels is True
 
 def test_gmail_provider_capabilities():
     provider = GmailProvider(account_email="user@gmail.com")
@@ -96,4 +97,98 @@ def test_uid_validity_changed_error():
     assert err.expected == "123"
     assert err.actual == "456"
     assert "UIDVALIDITY mismatch for folder 'INBOX': expected 123, got 456" in str(err)
+
+def test_imap_apply_labels_uidvalidity_verification():
+    provider = ImapProvider(host="imap.gmail.com", username="user@gmail.com", password="pwd")
+    mock_client = MagicMock()
+    provider.client = mock_client
+
+    # Case 1: UIDVALIDITY mismatch raises error
+    mock_client.select.return_value = ("OK", [b"123"])
+    mock_client.response.return_value = ("OK", [b"99999"])
+    
+    with pytest.raises(UIDValidityChangedError):
+        provider.apply_labels(
+            ["imap_INBOX_101", "imap_INBOX_102"],
+            add_labels=["MailGraph/Finance"],
+            expected_uidvalidity={"INBOX": "11111"}
+        )
+
+    # Case 2: Matching UIDVALIDITY succeeds and issues STORE +X-GM-LABELS
+    mock_client.response.return_value = ("OK", [b"11111"])
+    mock_client.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "MailGraph/Finance"'])
+    mock_client.uid.return_value = ("OK", [b"Success"])
+
+    res = provider.apply_labels(
+        ["imap_INBOX_101", "imap_INBOX_102"],
+        add_labels=["MailGraph/Finance"],
+        expected_uidvalidity={"INBOX": "11111"}
+    )
+    assert res["status"] == "success"
+    assert res["count"] == 2
+    mock_client.uid.assert_called_with("STORE", "101,102", "+X-GM-LABELS", '("MailGraph/Finance")')
+
+    # Case 3: Undo removes label with -X-GM-LABELS
+    res_undo = provider.apply_labels(
+        ["imap_INBOX_101"],
+        remove_labels=["MailGraph/Finance"],
+        expected_uidvalidity={"INBOX": "11111"}
+    )
+    assert res_undo["status"] == "success"
+    mock_client.uid.assert_called_with("STORE", "101", "-X-GM-LABELS", '("MailGraph/Finance")')
+
+def test_imap_get_folder_uidvalidity():
+    provider = ImapProvider(host="imap.gmail.com", username="user@gmail.com", password="pwd")
+    mock_client = MagicMock()
+    provider.client = mock_client
+
+    mock_client.select.return_value = ("OK", [b"42"])
+    mock_client.response.return_value = ("OK", [b"12345"])
+
+    uidval = provider.get_folder_uidvalidity("INBOX")
+    assert uidval == "12345"
+    mock_client.select.assert_called_with('"INBOX"', readonly=True)
+    mock_client.response.assert_called_with("UIDVALIDITY")
+
+def test_imap_apply_labels_creates_missing_label():
+    provider = ImapProvider(host="imap.gmail.com", username="user@gmail.com", password="pwd")
+    mock_client = MagicMock()
+    provider.client = mock_client
+
+    mock_client.select.return_value = ("OK", [b"1"])
+    mock_client.response.return_value = ("OK", [b"11111"])
+    mock_client.list.return_value = ("OK", [None])  # Mailbox does not exist
+    mock_client.uid.return_value = ("OK", [b"Success"])
+
+    res = provider.apply_labels(
+        ["imap_INBOX_101"],
+        add_labels=["MailGraph/NewTag"],
+        expected_uidvalidity={"INBOX": "11111"}
+    )
+    assert res["status"] == "success"
+    mock_client.create.assert_called_with('"MailGraph/NewTag"')
+    mock_client.uid.assert_called_with("STORE", "101", "+X-GM-LABELS", '("MailGraph/NewTag")')
+
+def test_imap_apply_labels_chunking():
+    provider = ImapProvider(host="imap.gmail.com", username="user@gmail.com", password="pwd")
+    mock_client = MagicMock()
+    provider.client = mock_client
+
+    mock_client.select.return_value = ("OK", [b"250"])
+    mock_client.response.return_value = ("OK", [b"11111"])
+    mock_client.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "MailGraph/Bulk"'])
+    mock_client.uid.return_value = ("OK", [b"Success"])
+
+    # 150 message IDs
+    pids = [f"imap_INBOX_{i}" for i in range(1, 151)]
+    res = provider.apply_labels(
+        pids,
+        add_labels=["MailGraph/Bulk"],
+        expected_uidvalidity={"INBOX": "11111"}
+    )
+    assert res["status"] == "success"
+    assert res["count"] == 150
+    # Should have called uid STORE twice: chunk 1 (100) and chunk 2 (50)
+    assert mock_client.uid.call_count == 2
+
 
