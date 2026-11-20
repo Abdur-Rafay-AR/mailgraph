@@ -29,6 +29,11 @@ MailGraph is a desktop application that turns large, cluttered email mailboxes i
   - **Simulation Preview:** Shows exact target count, storage space recovered, protected messages excluded, and representative message samples before confirmation.
   - **Explicit Confirmation:** Buttons clearly state the exact action (e.g. `Move 842 messages to Trash`).
   - **Audit Trail & Undo:** Every operation is logged; one click restores original folder states.
+- **Gmail Labeling & 1-Click Category Sync:**
+  - **1-Click Category Sync:** Automatically syncs MailGraph's high-accuracy local categorizations to your live Gmail account, neatly organized under the `MailGraph/` label hierarchy (e.g., `MailGraph/Finance`, `MailGraph/Receipts`, `MailGraph/Newsletters`, `MailGraph/Security`).
+  - **Interactive Tagging:** Apply custom or preset tags to search filters or selected messages directly from **Message Explorer** and **Cleanup Studio**.
+  - **Reversible & Undoable:** Every labeling operation is recorded in the local audit log. Undo any category sync or tag batch with 1 click, cleanly removing applied labels from Gmail without modifying your messages.
+  - **Safety Guarantees:** Strict protection rules ensure VIP and starred emails are never mislabeled. IMAP labeling enforces real-time `UIDVALIDITY` verification to prevent mislabeling across session changes, while Gmail API labeling leverages 1,000-ID chunking and cache-busting.
 - **Email Time Machine:**
   - Histograms showing message influx over time (grouped by Month, Year, or Day).
   - Sender activity lifecycles (first seen, peak activity, and most recent communication).
@@ -179,6 +184,8 @@ This utility:
 - [Technical Architecture (`docs/architecture.md`)](docs/architecture.md)
 - [Provider Support Guide (`docs/provider-support.md`)](docs/provider-support.md)
 - [Implementation Plan (`docs/superpowers/plans/2026-11-12-mailgraph-implementation.md`)](docs/superpowers/plans/2026-11-12-mailgraph-implementation.md)
+- [Gmail Labeling Design Spec (`docs/superpowers/specs/2026-11-20-gmail-labeling-design.md`)](docs/superpowers/specs/2026-11-20-gmail-labeling-design.md)
+- [Gmail Labeling Implementation Plan (`docs/superpowers/plans/2026-11-20-gmail-labeling.md`)](docs/superpowers/plans/2026-11-20-gmail-labeling.md)
 
 ---
 
