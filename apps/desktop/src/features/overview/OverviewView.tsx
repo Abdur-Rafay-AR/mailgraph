@@ -24,6 +24,7 @@ import { CategorySyncModal } from './CategorySyncModal';
 interface OverviewViewProps {
   accountId?: number;
   accounts?: Account[];
+  refreshTrigger?: number;
   onNavigate: (view: any) => void;
   onOpenSenderMessages?: (senderAddress: string) => void;
   onSyncMailbox?: () => void;
@@ -34,6 +35,7 @@ interface OverviewViewProps {
 export const OverviewView: React.FC<OverviewViewProps> = ({
   accountId,
   accounts = [],
+  refreshTrigger = 0,
   onNavigate,
   onOpenSenderMessages,
   onSyncMailbox,
@@ -45,21 +47,27 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const [demoLoading, setDemoLoading] = useState<boolean>(false);
   const [syncModalOpen, setSyncModalOpen] = useState<boolean>(false);
 
-  const fetchStats = async () => {
-    setLoading(true);
+  const fetchStats = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.getOverview(accountId);
       setStats(data);
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchStats();
+    fetchStats(false);
   }, [accountId]);
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      fetchStats(true);
+    }
+  }, [refreshTrigger]);
 
   const handleGenerateDemo = async () => {
     setDemoLoading(true);
@@ -105,7 +113,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           <Button
             size="sm"
             variant="outline"
-            onClick={fetchStats}
+            onClick={() => fetchStats(false)}
             loading={loading}
             icon={<RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />}
             title="Refresh database stats"

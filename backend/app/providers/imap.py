@@ -2,9 +2,10 @@
 
 import imaplib
 import re
-from typing import Generator, List, Optional, Dict, Any
-from backend.app.providers.base import AbstractMailProvider, ProviderCapabilities, ProviderFolder
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+
 from backend.app.ingestion.mime_parser import MimeParser, ParsedEmail
+from backend.app.providers.base import AbstractMailProvider, ProviderCapabilities, ProviderFolder
 from backend.app.providers.exceptions import UIDValidityChangedError
 
 class ImapProvider(AbstractMailProvider):
@@ -85,7 +86,7 @@ class ImapProvider(AbstractMailProvider):
                 elif "\\sent" in flags or "sent" in name.lower():
                     f_type = "sent"
                     is_special = True
-                elif "\\archive" in flags or "archive" in name.lower():
+                elif "\\archive" in flags or "\\all" in flags or "archive" in name.lower() or "all mail" in name.lower():
                     f_type = "archive"
                     is_special = True
                 elif "\\drafts" in flags or "draft" in name.lower():
@@ -109,24 +110,72 @@ class ImapProvider(AbstractMailProvider):
             pass
         return 0
 
+    def get_all_mail_folder_name(self) -> Optional[str]:
+        """Return the server's All Mail folder name (e.g. [Gmail]/All Mail) if available."""
+        try:
+            if not self.client:
+                self.connect()
+            assert self.client is not None
+            typ, folder_lines = self.client.list()
+            if typ == "OK" and folder_lines:
+                for line in folder_lines:
+                    if not isinstance(line, bytes):
+                        continue
+                    decoded = line.decode("utf-8", errors="replace")
+                    match = re.search(r'\((?P<flags>[^\)]*)\)\s+"?[^"]+"?\s+"?(?P<name>[^"]+)"?$', decoded)
+                    if not match:
+                        continue
+                    flags = match.group("flags").lower()
+                    name = match.group("name").strip()
+                    if "\\all" in flags or name in ("[Gmail]/All Mail", "[Google Mail]/All Mail"):
+                        return name
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _extract_uid_and_flags(data: list, idx: int, meta_bytes: bytes, fallback_uid: str = "unknown") -> tuple[str, bool, bool]:
+        """Extract UID and \\Seen / \\Flagged flags from both pre-literal and post-literal IMAP FETCH responses."""
+        meta_str = meta_bytes.decode("ascii", errors="ignore")
+        if idx + 1 < len(data) and isinstance(data[idx + 1], bytes):
+            meta_str += " " + data[idx + 1].decode("ascii", errors="ignore")
+
+        m = re.search(r"UID\s+(\d+)", meta_str)
+        uid_str = m.group(1) if m else fallback_uid
+
+        flags_match = re.search(r"FLAGS\s*\(([^)]*)\)", meta_str, re.IGNORECASE)
+        flags_str = flags_match.group(1).lower() if flags_match else ""
+        is_read = "\\seen" in flags_str
+        is_starred = "\\flagged" in flags_str
+        return uid_str, is_read, is_starred
+
     def stream_messages(
         self,
         folder_id: Optional[str] = None,
         limit: Optional[int] = None,
-        batch_size: int = 50
+        batch_size: int = 50,
+        known_state: Optional[Dict[str, Tuple[bool, bool]]] = None,
+        on_flag_updates: Optional[Callable[[List[Tuple[str, bool, bool]], int], None]] = None,
     ) -> Generator[ParsedEmail, None, None]:
-        """Stream parsed emails using high-throughput multi-UID batch fetching."""
+        """Stream parsed emails using high-throughput multi-UID batch fetching.
+
+        When known_state is provided (mapping provider_message_id -> (is_read, is_starred)),
+        already-indexed UIDs perform a lightweight FLAGS-only check instead of re-downloading
+        full message bodies, dramatically accelerating incremental and full-mailbox syncs.
+        """
         if not self.client:
             self.connect()
         assert self.client is not None
-        
+
         target_folder = folder_id or "INBOX"
-        self.client.select(f'"{target_folder}"', readonly=True)
-        
+        sel_typ, _ = self.client.select(f'"{target_folder}"', readonly=True)
+        if sel_typ != "OK":
+            return
+
         typ, msg_nums = self.client.uid("SEARCH", None, "ALL")
         if typ != "OK" or not msg_nums or not msg_nums[0]:
             return
-            
+
         all_uids = msg_nums[0].split()
         if not all_uids:
             return
@@ -136,13 +185,44 @@ class ImapProvider(AbstractMailProvider):
             selected_uids = all_uids[-limit:]
         else:
             selected_uids = all_uids
-            
+
         # Reverse so most recent messages arrive first
         uids_list = [u.decode("ascii") for u in reversed(selected_uids)]
 
-        # Fetch in multi-UID batches (50 messages per round-trip instead of 1)
-        for i in range(0, len(uids_list), batch_size):
-            chunk = uids_list[i:i + batch_size]
+        # Partition into already-indexed UIDs (flags-only check) vs new UIDs (full fetch)
+        if known_state is not None:
+            existing_uids = [u for u in uids_list if f"imap_{target_folder}_{u}" in known_state]
+            new_uids = [u for u in uids_list if f"imap_{target_folder}_{u}" not in known_state]
+
+            for i in range(0, len(existing_uids), 500):
+                chunk = existing_uids[i:i + 500]
+                uid_set = ",".join(chunk)
+                updates: List[Tuple[str, bool, bool]] = []
+                try:
+                    f_res, f_data = self.client.uid("FETCH", uid_set, "(UID FLAGS)")
+                    if f_res == "OK" and f_data:
+                        for idx, item in enumerate(f_data):
+                            raw_bytes = item[0] if isinstance(item, tuple) else item
+                            if not isinstance(raw_bytes, bytes):
+                                continue
+                            uid_str, is_read, is_starred = self._extract_uid_and_flags(f_data, idx, raw_bytes)
+                            if uid_str == "unknown":
+                                continue
+                            pmid = f"imap_{target_folder}_{uid_str}"
+                            prev = known_state.get(pmid)
+                            if prev is not None and prev != (is_read, is_starred):
+                                updates.append((pmid, is_read, is_starred))
+                                known_state[pmid] = (is_read, is_starred)
+                except Exception:
+                    pass
+                if on_flag_updates:
+                    on_flag_updates(updates, len(chunk))
+        else:
+            new_uids = uids_list
+
+        # Fetch new messages in multi-UID batches (50 messages per round-trip)
+        for i in range(0, len(new_uids), batch_size):
+            chunk = new_uids[i:i + batch_size]
             uid_set = ",".join(chunk)
 
             try:
@@ -151,19 +231,15 @@ class ImapProvider(AbstractMailProvider):
                 if res != "OK" or not data:
                     continue
 
-                for item in data:
+                for idx, item in enumerate(data):
                     if isinstance(item, tuple) and len(item) == 2:
                         meta_bytes, raw_email = item
-                        meta_str = meta_bytes.decode("ascii", errors="ignore")
-                        m = re.search(r"UID\s+(\d+)", meta_str)
-                        uid_str = m.group(1) if m else "unknown"
-                        flags_match = re.search(r"FLAGS\s*\(([^)]*)\)", meta_str, re.IGNORECASE)
-                        flags_str = flags_match.group(1) if flags_match else ""
+                        uid_str, is_read, is_starred = self._extract_uid_and_flags(data, idx, meta_bytes)
 
                         try:
                             parsed = self.parser.parse_bytes(raw_email, provider_message_id=f"imap_{target_folder}_{uid_str}")
-                            parsed.is_read = "\\seen" in flags_str.lower()
-                            parsed.is_starred = "\\flagged" in flags_str.lower()
+                            parsed.is_read = is_read
+                            parsed.is_starred = is_starred
                             yield parsed
                         except Exception:
                             continue
@@ -173,13 +249,11 @@ class ImapProvider(AbstractMailProvider):
                     try:
                         s_res, s_data = self.client.uid("FETCH", single_uid, "(BODY.PEEK[] FLAGS)")
                         if s_res == "OK" and s_data and isinstance(s_data[0], tuple):
-                            meta_str = s_data[0][0].decode("ascii", errors="ignore")
-                            raw_email = s_data[0][1]
-                            flags_match = re.search(r"FLAGS\s*\(([^)]*)\)", meta_str, re.IGNORECASE)
-                            flags_str = flags_match.group(1) if flags_match else ""
+                            meta_bytes, raw_email = s_data[0][0], s_data[0][1]
+                            _, is_read, is_starred = self._extract_uid_and_flags(s_data, 0, meta_bytes, single_uid)
                             parsed = self.parser.parse_bytes(raw_email, provider_message_id=f"imap_{target_folder}_{single_uid}")
-                            parsed.is_read = "\\seen" in flags_str.lower()
-                            parsed.is_starred = "\\flagged" in flags_str.lower()
+                            parsed.is_read = is_read
+                            parsed.is_starred = is_starred
                             yield parsed
                     except Exception:
                         continue

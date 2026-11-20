@@ -7,9 +7,10 @@ import { Badge } from '../../components/Badge';
 
 interface AttachmentsViewProps {
   accountId?: number;
+  refreshTrigger?: number;
 }
 
-export const AttachmentsView: React.FC<AttachmentsViewProps> = ({ accountId }) => {
+export const AttachmentsView: React.FC<AttachmentsViewProps> = ({ accountId, refreshTrigger = 0 }) => {
   const [activeTab, setActiveTab] = useState<'all' | 'duplicates'>('duplicates');
   const [attachments, setAttachments] = useState<any[]>([]);
   const [duplicates, setDuplicates] = useState<DuplicateAttachmentGroup[]>([]);
@@ -17,8 +18,8 @@ export const AttachmentsView: React.FC<AttachmentsViewProps> = ({ accountId }) =
   const [search, setSearch] = useState<string>('');
   const [mimeFilter, setMimeFilter] = useState<string>('');
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       if (activeTab === 'duplicates') {
         const res = await api.getDuplicateAttachments(accountId);
@@ -36,13 +37,19 @@ export const AttachmentsView: React.FC<AttachmentsViewProps> = ({ accountId }) =
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchData(false);
   }, [activeTab, search, mimeFilter, accountId]);
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      fetchData(true);
+    }
+  }, [refreshTrigger]);
 
   const totalWastedBytes = duplicates.reduce(
     (acc, d) => acc + d.file_size * (d.duplicate_count - 1),

@@ -18,10 +18,11 @@ import { Button } from '../../components/Button';
 
 interface TimelineViewProps {
   accountId?: number;
+  refreshTrigger?: number;
   onOpenSenderMessages?: (senderAddress: string) => void;
 }
 
-export const TimelineView: React.FC<TimelineViewProps> = ({ accountId, onOpenSenderMessages }) => {
+export const TimelineView: React.FC<TimelineViewProps> = ({ accountId, refreshTrigger = 0, onOpenSenderMessages }) => {
   const [groupBy, setGroupBy] = useState<'year' | 'month' | 'day'>('month');
   const [metricMode, setMetricMode] = useState<'volume' | 'storage'>('volume');
   const [volumeData, setVolumeData] = useState<any[]>([]);
@@ -29,8 +30,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ accountId, onOpenSen
   const [cadenceData, setCadenceData] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const fetchTimelineData = async () => {
-    setLoading(true);
+  const fetchTimelineData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [vol, senders, cadence] = await Promise.all([
         api.getTimelineVolume(groupBy, groupBy === 'day' ? 30 : undefined, accountId),
@@ -43,13 +44,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ accountId, onOpenSen
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchTimelineData();
+    fetchTimelineData(false);
   }, [groupBy, accountId]);
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      fetchTimelineData(true);
+    }
+  }, [refreshTrigger]);
 
   // Derived KPI metrics
   const totalVolume = useMemo(() => {

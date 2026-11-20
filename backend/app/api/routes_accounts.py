@@ -315,6 +315,7 @@ def sync_account(account_id: int, limit: Optional[int] = 100):
         "account_id": account_id,
         "scanned_count": res.scanned_count,
         "inserted_count": res.inserted_count,
+        "updated_count": res.updated_count,
         "skipped_count": res.skipped_count,
         "failed_count": res.failed_count
     }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar, NavView } from './components/Sidebar';
 import { Header } from './components/Header';
 import { OverviewView } from './features/overview/OverviewView';
@@ -29,8 +29,11 @@ export const App: React.FC = () => {
   const [cleanupInitialQuery, setCleanupInitialQuery] = useState<QueryAST | undefined>(undefined);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
-  // Global background ingestion state
+  // Global background ingestion state & auto-refresh trigger
   const [activeSyncJob, setActiveSyncJob] = useState<SyncJob | null>(null);
+  const [syncRefreshTrigger, setSyncRefreshTrigger] = useState<number>(0);
+  const scopedAccountIdRef = useRef<number | undefined>(scopedAccountId);
+  scopedAccountIdRef.current = scopedAccountId;
 
   const fetchAccounts = async () => {
     try {
@@ -65,20 +68,38 @@ export const App: React.FC = () => {
   // Poll background sync telemetry (keeps running regardless of active tab)
   useEffect(() => {
     let isMounted = true;
+    let wasActive = false;
+    let lastInserted = -1;
+    let lastUpdated = -1;
+    let lastTickMs = 0;
+
     const pollSync = async () => {
       try {
         const res = await api.getActiveSync();
         if (!isMounted) return;
-        if (res.active && res.job) {
-          setActiveSyncJob(res.job);
-        } else {
-          setActiveSyncJob((prev) => {
-            if (prev && (prev.status === 'running' || prev.status === 'stopping')) {
-              fetchGlobalStats();
-              fetchAccounts();
-            }
-            return res.job || null;
-          });
+        const job = res.job || null;
+        setActiveSyncJob(job);
+
+        if (res.active && job) {
+          wasActive = true;
+          const now = Date.now();
+          const changed =
+            job.inserted_count !== lastInserted ||
+            (job.updated_count || 0) !== lastUpdated;
+          if (changed && now - lastTickMs >= 2000) {
+            lastInserted = job.inserted_count;
+            lastUpdated = job.updated_count || 0;
+            lastTickMs = now;
+            fetchGlobalStats(scopedAccountIdRef.current);
+            setSyncRefreshTrigger((n) => n + 1);
+          }
+        } else if (wasActive) {
+          wasActive = false;
+          lastInserted = -1;
+          lastUpdated = -1;
+          fetchGlobalStats(scopedAccountIdRef.current);
+          fetchAccounts();
+          setSyncRefreshTrigger((n) => n + 1);
         }
       } catch (_) {}
     };
@@ -128,7 +149,7 @@ export const App: React.FC = () => {
         setCurrentView('settings');
         return;
       }
-      await handleStartSync(targetAcc.id, 100);
+      await handleStartSync(targetAcc.id, 0);
     } catch (err: any) {
       setGlobalError(err.message || 'Failed to start mailbox sync');
     }
@@ -261,6 +282,7 @@ export const App: React.FC = () => {
             <OverviewView
               accountId={scopedAccountId}
               accounts={accounts}
+              refreshTrigger={syncRefreshTrigger}
               onNavigate={setCurrentView}
               onSyncMailbox={handleSyncMailbox}
               onDemoGenerated={async () => {
@@ -282,6 +304,7 @@ export const App: React.FC = () => {
           {currentView === 'graph' && (
             <GraphView
               accountId={scopedAccountId}
+              refreshTrigger={syncRefreshTrigger}
               onNavigateToMessages={(addr) => {
                 if (addr) setMessagesSenderFilter(addr);
                 setCurrentView('messages');
@@ -296,6 +319,7 @@ export const App: React.FC = () => {
           {currentView === 'messages' && (
             <MessagesView
               accountId={scopedAccountId}
+              refreshTrigger={syncRefreshTrigger}
               initialSender={messagesSenderFilter}
               onClearSenderFilter={() => setMessagesSenderFilter('')}
               onOpenCleanupWithQuery={(query) => {
@@ -308,6 +332,7 @@ export const App: React.FC = () => {
           {currentView === 'senders' && (
             <SendersView
               accountId={scopedAccountId}
+              refreshTrigger={syncRefreshTrigger}
               onOpenMessagesWithSender={(addr) => {
                 setMessagesSenderFilter(addr);
                 setCurrentView('messages');
@@ -327,6 +352,7 @@ export const App: React.FC = () => {
           {currentView === 'timeline' && (
             <TimelineView
               accountId={scopedAccountId}
+              refreshTrigger={syncRefreshTrigger}
               onOpenSenderMessages={(addr) => {
                 setMessagesSenderFilter(addr);
                 setCurrentView('messages');
@@ -334,11 +360,14 @@ export const App: React.FC = () => {
             />
           )}
 
-          {currentView === 'attachments' && <AttachmentsView accountId={scopedAccountId} />}
+          {currentView === 'attachments' && (
+            <AttachmentsView accountId={scopedAccountId} refreshTrigger={syncRefreshTrigger} />
+          )}
 
           {currentView === 'insights' && (
             <InsightsView
               accountId={scopedAccountId}
+              refreshTrigger={syncRefreshTrigger}
               onOpenMessages={(addr) => {
                 if (addr) setMessagesSenderFilter(addr);
                 setCurrentView('messages');

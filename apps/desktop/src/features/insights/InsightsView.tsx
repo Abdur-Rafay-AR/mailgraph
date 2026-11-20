@@ -7,6 +7,7 @@ import { Badge } from '../../components/Badge';
 
 interface InsightsViewProps {
   accountId?: number;
+  refreshTrigger?: number;
   onOpenMessages?: (senderAddress?: string) => void;
   onOpenAttachments?: () => void;
   onOpenCleanup?: (query: QueryAST) => void;
@@ -14,6 +15,7 @@ interface InsightsViewProps {
 
 export const InsightsView: React.FC<InsightsViewProps> = ({
   accountId,
+  refreshTrigger = 0,
   onOpenMessages,
   onOpenAttachments,
   onOpenCleanup,
@@ -21,21 +23,27 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
   const [insights, setInsights] = useState<Insight[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const fetchInsights = async () => {
-    setLoading(true);
+  const fetchInsights = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.getInsights(accountId);
       setInsights(data);
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchInsights();
+    fetchInsights(false);
   }, [accountId]);
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      fetchInsights(true);
+    }
+  }, [refreshTrigger]);
 
   const handleDismiss = async (id: number) => {
     try {
@@ -74,7 +82,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
             Every insight explains its supporting telemetry and evidence. MailGraph never modifies mailbox state without explicit user approval.
           </p>
         </div>
-        <Button size="xs" variant="ghost" onClick={fetchInsights} loading={loading}>
+        <Button size="xs" variant="ghost" onClick={() => fetchInsights(false)} loading={loading}>
           Re-evaluate
         </Button>
       </div>

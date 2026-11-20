@@ -63,3 +63,37 @@ def test_ingestion_pipeline_deduplication():
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM messages WHERE account_id = ?;", (account_id,))
         assert cursor.fetchone()[0] == 20
+
+
+def test_ingestion_pipeline_updates_read_and_star_flags_on_resync():
+    db = Database(db_path=":memory:")
+    with db.connect() as conn:
+        run_migrations(conn)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO accounts (provider, display_name, email_address) VALUES ('imap', 'Gmail', 'u@gmail.com');")
+        account_id = cursor.lastrowid
+
+    generator = SyntheticMailboxGenerator(seed=321)
+    messages = list(generator.generate(count=5))
+    for m in messages:
+        m.is_read = False
+        m.is_starred = False
+
+    pipeline = IngestionPipeline(db)
+    res1 = pipeline.ingest_messages(account_id, messages)
+    assert res1.inserted_count == 5
+
+    # Re-sync with updated read/starred flags
+    for m in messages:
+        m.is_read = True
+    messages[0].is_starred = True
+
+    res2 = pipeline.ingest_messages(account_id, messages)
+    assert res2.inserted_count == 0
+    assert res2.updated_count == 5
+
+    with db.connect() as conn:
+        unread = conn.execute("SELECT COUNT(*) FROM messages WHERE account_id = ? AND is_read = 0;", (account_id,)).fetchone()[0]
+        starred = conn.execute("SELECT COUNT(*) FROM messages WHERE account_id = ? AND is_starred = 1;", (account_id,)).fetchone()[0]
+        assert unread == 0
+        assert starred == 1
