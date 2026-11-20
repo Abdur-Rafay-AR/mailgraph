@@ -106,7 +106,11 @@ IMAP UIDs are strictly valid only within a specific mailbox's `UIDVALIDITY` gene
 2. Before executing any `UID STORE` in `apply_labels()`:
    - Select the target folder in read-write mode: `typ, data = self.client.select(f'"{folder}"', readonly=False)`
    - Parse `UIDVALIDITY` from response: `res, val = self.client.response("UIDVALIDITY")` or regex match `[UIDVALIDITY <value>]`.
-   - Compare with stored `uidvalidity`. If there is a mismatch (indicating UIDs were invalidated by the server), the operation **aborts immediately** with a `UIDValidityChangedError` and prompts the user to refresh their folder index.
+   - Compare with stored `uidvalidity`. If there is a mismatch (indicating UIDs were invalidated by the server), the operation **aborts immediately** raising `UIDValidityChangedError`.
+3. **Recovery UX**:
+   - The API returns error code `UIDVALIDITY_MISMATCH`.
+   - The UI displays an inline resolution banner: *"Folder index changed on Gmail. Re-indexing is required to update message IDs before labeling."* with a **"Re-index Folder Now"** button.
+   - Re-indexing runs an incremental sync on that folder to update message UIDs and `uidvalidity`. Once completed, the user is prompted to re-confirm the label action with fresh, verified UIDs (avoiding unconfirmed automatic mutations).
 
 #### B. Label Creation & Sanitization
 - Check if folder/label exists via `list(pattern=f'"{label_name}"')`.
@@ -162,6 +166,7 @@ In `backend/app/actions/engine.py`:
   - Query compilation automatically joins active `protection_rules` (e.g. `no-reply@accounts.google.com`, `apple.com`, `github.com`, and starred senders marked as protected).
   - Protected messages are strictly filtered out of the target set.
   - The preview calculation explicitly reports `protected_excluded_count`. If a user attempts to label protected messages, they are notified that protected contacts have been safeguarded and will not be labeled unless explicitly unshielded.
+  - **Fresh Execution-Time Re-Validation**: `execute_action()` does NOT rely on or replay message IDs captured in the preview snapshot. Instead, it re-compiles and re-executes the QueryAST against the database at execution time with `exclude_protected=True`. If any sender was added to protection rules between preview and execution (e.g. the user marked a sender as protected while viewing the preview), they are guaranteed to be excluded at execute time.
 
 ### 5.2 Label Operations, Idempotency & Undo
 - **`calculate_preview(account_id, operation_type, ast, label_name=None)`**:
@@ -175,6 +180,7 @@ In `backend/app/actions/engine.py`:
     - `original_state_json`: `{}`.
     - `result_state_json`: `{"added_label": label_name}`.
   - Dispatches remote call to `remote_provider.apply_labels(target_pids, add_labels=[label_name])`.
+  - **Idempotency Guarantee for Single Actions**: Both IMAP (`STORE +X-GM-LABELS`) and Gmail REST API (`batchModify(addLabelIds)`) are inherently idempotent—applying an already-present label to a message in Gmail is a safe, benign no-op. If a large ad-hoc label operation in Cleanup Studio or Message Explorer is interrupted mid-way and re-executed by the user, repeating the call across previously labeled messages produces zero side effects and ensures 100% target coverage.
 - **`undo_operation(operation_id)`**:
   - Fetches successful `operation_items`.
   - Extracts `added_label` from `result_state_json`.
