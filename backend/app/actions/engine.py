@@ -30,11 +30,20 @@ class ActionEngine:
         self.db = db
         self.compiler = QueryCompiler()
 
-    def calculate_preview(self, account_id: int, operation_type: str, ast: QueryAST) -> ActionPreview:
+    def calculate_preview(
+        self,
+        account_id: int,
+        operation_type: str,
+        ast: QueryAST,
+        label_name: Optional[str] = None
+    ) -> ActionPreview:
         """
         Calculate preview of targets, storage impact, exclusions, and samples.
         Uses identical query logic as the execution path.
         """
+        if operation_type not in ("trash", "archive", "label", "delete"):
+            raise ValueError(f"Unsupported operation type '{operation_type}'.")
+            
         ast.account_ids = [account_id]
         
         with self.db.connect() as conn:
@@ -117,6 +126,7 @@ class ActionEngine:
             reversibility_notes = {
                 "trash": "Reversible: Messages will be moved to the Trash folder and can be restored using the Undo button.",
                 "archive": "Reversible: Messages will be archived and can be restored back to Inbox.",
+                "label": "Reversible: Labels can be completely removed using the Undo button.",
                 "delete": "Warning: Permanent deletion cannot be automatically undone."
             }
             
@@ -131,7 +141,7 @@ class ActionEngine:
                 date_range_end=latest,
                 top_senders=top_senders,
                 samples=samples,
-                reversible=operation_type in ("trash", "archive"),
+                reversible=operation_type in ("trash", "archive", "label"),
                 reversibility_note=reversibility_notes.get(operation_type, "Standard provider operation.")
             )
 
@@ -163,6 +173,9 @@ class ActionEngine:
                             port=cred.get("port", 993),
                             use_ssl=cred.get("use_ssl", True)
                         )
+                    elif cred.get("provider") == "gmail" or provider_type == "gmail" or "access_token" in cred:
+                        from backend.app.providers.gmail import GmailProvider
+                        return GmailProvider(account_email=email_addr)
                 except Exception as ex:
                     print(f"Failed to initialize remote provider for {email_addr}: {ex}")
             return None
@@ -172,40 +185,54 @@ class ActionEngine:
         account_id: int,
         operation_type: str,
         ast: QueryAST,
+        label_name: Optional[str] = None,
         sync_remote: bool = True
     ) -> int:
         """
         Execute the confirmed operation on target messages.
         Returns operation_id.
         """
-        if operation_type not in ("trash", "archive"):
-            raise ValueError(f"Unsupported operation type '{operation_type}'. Only 'trash' and 'archive' allowed.")
+        if operation_type not in ("trash", "archive", "label"):
+            raise ValueError(f"Unsupported operation type '{operation_type}'. Only 'trash', 'archive', and 'label' allowed.")
+
+        if operation_type == "label" and not label_name:
+            raise ValueError("label_name is required for 'label' operation.")
             
         ast.account_ids = [account_id]
-        query_snapshot = json.dumps({
+        # For 'label' operations, protection rules are strictly enforced at execute time
+        if operation_type == "label":
+            ast.exclude_protected = True
+        elif ast.exclude_protected is None:
+            ast.exclude_protected = True
+        snapshot_dict = {
             "version": ast.version,
             "all": [{"field": c.field, "op": c.op, "value": c.value} for c in ast.all],
             "search_term": ast.search_term,
             "exclude_protected": ast.exclude_protected
-        })
+        }
+        if label_name:
+            snapshot_dict["label_name"] = label_name
+        query_snapshot = json.dumps(snapshot_dict)
         
         with self.db.connect() as conn:
             cursor = conn.cursor()
             
-            # Resolve destination folder
-            dest_folder_type = "trash" if operation_type == "trash" else "archive"
-            cursor.execute("""
-                SELECT id FROM folders WHERE account_id = ? AND folder_type = ? LIMIT 1;
-            """, (account_id, dest_folder_type))
-            dest_row = cursor.fetchone()
-            if dest_row:
-                dest_folder_id = dest_row[0]
-            else:
+            # Resolve destination folder if trash or archive
+            dest_folder_id = None
+            if operation_type in ("trash", "archive"):
+                dest_folder_type = "trash" if operation_type == "trash" else "archive"
                 cursor.execute("""
-                    INSERT INTO folders (account_id, provider_folder_id, name, folder_type, is_special)
-                    VALUES (?, ?, ?, ?, 1);
-                """, (account_id, dest_folder_type, dest_folder_type.capitalize(), dest_folder_type))
-                dest_folder_id = cursor.lastrowid
+                    SELECT id FROM folders WHERE account_id = ? AND folder_type = ? LIMIT 1;
+                """, (account_id, dest_folder_type))
+                dest_row = cursor.fetchone()
+                if dest_row:
+                    dest_folder_id = dest_row[0]
+                else:
+                    cursor.execute("""
+                        INSERT INTO folders (account_id, provider_folder_id, name, folder_type, is_special)
+                        VALUES (?, ?, ?, ?, 1);
+                    """, (account_id, dest_folder_type, dest_folder_type.capitalize(), dest_folder_type))
+                    dest_folder_id = cursor.lastrowid
                 
             # Compile target query to get fresh target IDs
             sql, params = self.compiler.compile_sql(ast, count_only=False)
@@ -231,8 +258,12 @@ class ActionEngine:
                 pid = r["provider_message_id"]
                 
                 try:
-                    orig_state = json.dumps({"folder_id": orig_folder_id, "is_read": r["is_read"]})
-                    result_state = json.dumps({"folder_id": dest_folder_id})
+                    if operation_type == "label":
+                        orig_state = "{}"
+                        result_state = json.dumps({"added_label": label_name})
+                    else:
+                        orig_state = json.dumps({"folder_id": orig_folder_id, "is_read": r["is_read"]})
+                        result_state = json.dumps({"folder_id": dest_folder_id})
                     
                     # Record item snapshot
                     cursor.execute("""
@@ -242,12 +273,13 @@ class ActionEngine:
                         ) VALUES (?, ?, ?, ?, ?, 'success');
                     """, (operation_id, msg_id, pid, orig_state, result_state))
                     
-                    # Update message record
-                    cursor.execute("""
-                        UPDATE messages
-                        SET folder_id = ?, updated_at = datetime('now')
-                        WHERE id = ?;
-                    """, (dest_folder_id, msg_id))
+                    if operation_type in ("trash", "archive"):
+                        # Update message record
+                        cursor.execute("""
+                            UPDATE messages
+                            SET folder_id = ?, updated_at = datetime('now')
+                            WHERE id = ?;
+                        """, (dest_folder_id, msg_id))
                     
                     completed_count += 1
                 except Exception as ex:
@@ -279,15 +311,18 @@ class ActionEngine:
                             remote_provider.move_to_trash(target_pids)
                         elif operation_type == "archive":
                             remote_provider.archive_messages(target_pids)
+                        elif operation_type == "label":
+                            remote_provider.apply_labels(target_pids, add_labels=[label_name])
                     except Exception as ex:
                         print(f"Warning: remote mailbox operation failed: {ex}")
                     finally:
-                        remote_provider.disconnect()
+                        if hasattr(remote_provider, "disconnect"):
+                            remote_provider.disconnect()
             
             return operation_id
 
     def undo_operation(self, operation_id: int) -> Dict[str, Any]:
-        """Undo a previously executed operation by restoring original message folder state."""
+        """Undo a previously executed operation by restoring original message folder state or removing labels."""
         with self.db.connect() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, account_id, operation_type, status, undo_status FROM operations WHERE id = ?;", (operation_id,))
@@ -299,44 +334,79 @@ class ActionEngine:
             op_type = op_row["operation_type"]
                 
             cursor.execute("""
-                SELECT id, message_id, provider_message_id, original_state_json, status 
+                SELECT id, message_id, provider_message_id, original_state_json, result_state_json, status 
                 FROM operation_items 
                 WHERE operation_id = ? AND status = 'success';
             """, (operation_id,))
             items = cursor.fetchall()
             
             restored_count = 0
-            for item in items:
-                item_id = item["id"]
-                message_id = item["message_id"]
-                orig_state = json.loads(item["original_state_json"])
-                orig_folder_id = orig_state.get("folder_id")
-                
-                cursor.execute("""
-                    UPDATE messages
-                    SET folder_id = ?, updated_at = datetime('now')
-                    WHERE id = ?;
-                """, (orig_folder_id, message_id))
-                
-                cursor.execute("UPDATE operation_items SET status = 'undone' WHERE id = ?;", (item_id,))
-                restored_count += 1
-                
-            cursor.execute("""
-                UPDATE operations
-                SET status = 'undone', undo_status = 'restored'
-                WHERE id = ?;
-            """, (operation_id,))
+            if op_type == "label":
+                labels_to_pids: Dict[str, List[str]] = {}
+                for item in items:
+                    item_id = item["id"]
+                    try:
+                        res_state = json.loads(item["result_state_json"] or "{}")
+                    except Exception:
+                        res_state = {}
+                    added_label = res_state.get("added_label")
+                    pid = item["provider_message_id"]
+                    if added_label and pid:
+                        labels_to_pids.setdefault(added_label, []).append(pid)
 
-            # Attempt remote undo on live server if supported
-            remote_provider = self._get_remote_provider(account_id)
-            if remote_provider and op_type == "trash":
-                try:
-                    pids = [r["provider_message_id"] for r in items if r["provider_message_id"]]
-                    remote_provider.restore_messages(pids, dest_folder="INBOX")
-                except Exception as ex:
-                    print(f"Warning: remote restore failed: {ex}")
-                finally:
-                    remote_provider.disconnect()
+                    cursor.execute("UPDATE operation_items SET status = 'undone' WHERE id = ?;", (item_id,))
+                    restored_count += 1
+
+                cursor.execute("""
+                    UPDATE operations
+                    SET status = 'undone', undo_status = 'restored'
+                    WHERE id = ?;
+                """, (operation_id,))
+
+                # Attempt remote label removal on live server if supported
+                remote_provider = self._get_remote_provider(account_id)
+                if remote_provider:
+                    try:
+                        for added_lbl, pids in labels_to_pids.items():
+                            remote_provider.apply_labels(pids, remove_labels=[added_lbl])
+                    except Exception as ex:
+                        print(f"Warning: remote label removal failed: {ex}")
+                    finally:
+                        if hasattr(remote_provider, "disconnect"):
+                            remote_provider.disconnect()
+            else:
+                for item in items:
+                    item_id = item["id"]
+                    message_id = item["message_id"]
+                    orig_state = json.loads(item["original_state_json"])
+                    orig_folder_id = orig_state.get("folder_id")
+                    
+                    cursor.execute("""
+                        UPDATE messages
+                        SET folder_id = ?, updated_at = datetime('now')
+                        WHERE id = ?;
+                    """, (orig_folder_id, message_id))
+                    
+                    cursor.execute("UPDATE operation_items SET status = 'undone' WHERE id = ?;", (item_id,))
+                    restored_count += 1
+                    
+                cursor.execute("""
+                    UPDATE operations
+                    SET status = 'undone', undo_status = 'restored'
+                    WHERE id = ?;
+                """, (operation_id,))
+
+                # Attempt remote undo on live server if supported
+                remote_provider = self._get_remote_provider(account_id)
+                if remote_provider and op_type == "trash":
+                    try:
+                        pids = [r["provider_message_id"] for r in items if r["provider_message_id"]]
+                        remote_provider.restore_messages(pids, dest_folder="INBOX")
+                    except Exception as ex:
+                        print(f"Warning: remote restore failed: {ex}")
+                    finally:
+                        if hasattr(remote_provider, "disconnect"):
+                            remote_provider.disconnect()
             
             return {
                 "operation_id": operation_id,
