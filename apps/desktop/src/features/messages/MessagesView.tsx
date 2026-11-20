@@ -126,7 +126,7 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
   };
 
   const handleTagSuccess = (operation: CleanupOperation, labelName: string) => {
-    const count = operation.completed_count || operation.target_count || tagModalTargetCount;
+    const count = operation.completed_count ?? operation.target_count ?? tagModalTargetCount;
     setSelectedIds(new Set());
     fetchMessages();
     setTagToast({
@@ -163,30 +163,7 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
   const fetchMessages = async () => {
     setLoading(true);
     try {
-      const allConditions: QueryCondition[] = [];
-      if (selectedCategory) {
-        allConditions.push({ field: 'category', op: 'eq', value: selectedCategory });
-      }
-      if (unreadOnly) {
-        allConditions.push({ field: 'is_read', op: 'eq', value: false });
-      }
-      if (hasAttachmentsOnly) {
-        allConditions.push({ field: 'has_attachments', op: 'eq', value: true });
-      }
-      if (starredOnly) {
-        allConditions.push({ field: 'is_starred', op: 'eq', value: true });
-      }
-      if (senderFilter) {
-        allConditions.push({ field: 'sender_address', op: 'eq', value: senderFilter });
-      }
-
-      const ast: QueryAST = {
-        version: 1,
-        account_ids: accountId !== undefined ? [accountId] : undefined,
-        search_term: searchTerm.trim() || undefined,
-        all: allConditions,
-        exclude_protected: excludeProtected,
-      };
+      const ast = getCurrentSearchQuery();
 
       const res = await api.searchMessages({
         query: ast,
@@ -282,6 +259,7 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
             <Button
               size="xs"
               variant="outline"
+              disabled={loading || (totalCount === 0 && selectedIds.size === 0)}
               icon={<Tag className="w-3.5 h-3.5 text-brand-light" />}
               onClick={handleOpenTagModal}
               title="Tag in Gmail"
@@ -431,12 +409,17 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
               {tagToast.undone ? (
                 <>
                   Successfully removed label <strong className="text-white">"{tagToast.labelName}"</strong> from{' '}
-                  <strong className="text-white">{tagToast.restoredCount ?? tagToast.count} messages</strong>.
+                  <strong className="text-white">{(tagToast.restoredCount ?? tagToast.count).toLocaleString()} messages</strong>.
                 </>
+              ) : tagToast.count === 0 ? (
+                <span>Protected messages shielded: 0 messages labeled.</span>
               ) : (
                 <>
                   Successfully applied label <strong className="text-white">"{tagToast.labelName}"</strong> to{' '}
-                  <strong className="text-white">{tagToast.count} messages</strong> in Gmail.
+                  <strong className="text-white">
+                    {tagToast.count.toLocaleString()} message{tagToast.count === 1 ? '' : 's'}
+                  </strong>{' '}
+                  in Gmail.
                 </>
               )}
             </span>

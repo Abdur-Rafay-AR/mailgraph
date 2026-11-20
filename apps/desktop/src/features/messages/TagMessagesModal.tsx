@@ -97,11 +97,11 @@ export const TagMessagesModal: React.FC<TagMessagesModalProps> = ({
         label_name: trimmed,
         query,
       });
+      setExecuting(false);
       onSuccess(operation, trimmed);
       onClose();
     } catch (err: any) {
       setExecuteError(err.message || 'Error executing Gmail label operation');
-    } finally {
       setExecuting(false);
     }
   };
@@ -156,7 +156,7 @@ export const TagMessagesModal: React.FC<TagMessagesModalProps> = ({
               <button
                 key={preset}
                 type="button"
-                disabled={executing}
+                disabled={executing || previewLoading}
                 onClick={() => {
                   setLabelName(preset);
                   setPreview(null);
@@ -178,7 +178,7 @@ export const TagMessagesModal: React.FC<TagMessagesModalProps> = ({
             <input
               type="text"
               value={labelName}
-              disabled={executing}
+              disabled={executing || previewLoading}
               onChange={(e) => {
                 setLabelName(e.target.value);
                 setPreview(null);
@@ -285,7 +285,7 @@ export const TagMessagesModal: React.FC<TagMessagesModalProps> = ({
               variant="outline"
               icon={<Eye className="w-3.5 h-3.5" />}
               loading={previewLoading}
-              disabled={executing || !labelName.trim()}
+              disabled={executing || previewLoading || !labelName.trim()}
               onClick={handlePreview}
             >
               Preview
@@ -296,7 +296,7 @@ export const TagMessagesModal: React.FC<TagMessagesModalProps> = ({
               variant="primary"
               icon={<Tag className="w-3.5 h-3.5" />}
               loading={executing}
-              disabled={executing || !labelName.trim()}
+              disabled={executing || !labelName.trim() || targetCount === 0}
               onClick={handleConfirmTag}
             >
               Confirm & Tag in Gmail
