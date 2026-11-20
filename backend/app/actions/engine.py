@@ -191,7 +191,8 @@ class ActionEngine:
         ast: QueryAST,
         label_name: Optional[str] = None,
         batch_id: Optional[str] = None,
-        sync_remote: bool = True
+        sync_remote: bool = True,
+        target_message_ids: Optional[List[int]] = None
     ) -> int:
         """
         Execute the confirmed operation on target messages.
@@ -245,6 +246,9 @@ class ActionEngine:
             sql, params = self.compiler.compile_sql(ast, count_only=False)
             cursor.execute(sql, params)
             target_rows = cursor.fetchall()
+            if target_message_ids is not None:
+                target_ids_set = set(target_message_ids)
+                target_rows = [r for r in target_rows if r["id"] in target_ids_set]
             target_count = len(target_rows)
             
             # Record operation
@@ -322,6 +326,16 @@ class ActionEngine:
                             remote_provider.apply_labels(target_pids, add_labels=[label_name])
                     except Exception as ex:
                         print(f"Warning: remote mailbox operation failed: {ex}")
+                        cursor.execute("""
+                            UPDATE operations
+                            SET status = 'completed_with_errors'
+                            WHERE id = ?;
+                        """, (operation_id,))
+                        cursor.execute("""
+                            UPDATE operation_items
+                            SET error_message = ?
+                            WHERE operation_id = ?;
+                        """, (str(ex), operation_id))
                     finally:
                         if hasattr(remote_provider, "disconnect"):
                             remote_provider.disconnect()
