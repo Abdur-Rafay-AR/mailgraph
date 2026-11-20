@@ -212,6 +212,14 @@ def test_category_sync_unmapped_custom_category(tmp_path):
     assert preview["categories"][0]["category"] == "consulting"
     assert preview["categories"][0]["label"] == "MailGraph/Consulting"
 
+    from backend.app.classification.category_sync import get_label_for_category
+    assert get_label_for_category("project_management") == "MailGraph/Project Management"
+
+    # Test undo_batch guard clause on empty/invalid batch_id
+    assert service.undo_batch("") == {"batch_id": "", "undone_count": 0, "operation_ids": []}
+    assert service.undo_batch("   ") == {"batch_id": "   ", "undone_count": 0, "operation_ids": []}
+    assert service.undo_batch(None) == {"batch_id": None, "undone_count": 0, "operation_ids": []}
+
     res = service.execute_sync(account_id=1, sync_remote=False)
     assert res["labeled_count"] == 1
 
@@ -264,5 +272,34 @@ def test_category_sync_idempotency_and_resume(tmp_path, monkeypatch):
     assert len(res3["operation_ids"]) == 1
     assert mock_provider.apply_labels.call_count == 1
     mock_provider.apply_labels.assert_called_with(["msg_fin_2"], add_labels=["MailGraph/Finance"])
+
+
+def test_category_sync_remote_provider_failure_sets_error_status(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "sync_fail.db"))
+    db.initialize()
+
+    with db.connect() as conn:
+        conn.execute("INSERT INTO accounts (id, provider, display_name, email_address) VALUES (1, 'synthetic', 'User', 'u@test.com');")
+        conn.execute("INSERT INTO folders (id, account_id, provider_folder_id, name) VALUES (1, 1, 'INBOX', 'INBOX');")
+        conn.execute("INSERT INTO senders (id, normalized_address, domain) VALUES (1, 'bank@nayapay.com', 'nayapay.com');")
+        conn.execute("INSERT INTO messages (id, account_id, provider_message_id, folder_id, sender_id, sender_address, received_at) VALUES (1, 1, 'msg_fin_1', 1, 1, 'bank@nayapay.com', '2026-01-01');")
+
+        fin_id = conn.execute("SELECT id FROM categories WHERE name = 'finance';").fetchone()[0]
+        conn.execute("INSERT INTO message_categories (message_id, category_id, source) VALUES (1, ?, 'rule');", (fin_id,))
+
+    service = CategoryLabelSyncService(db)
+    mock_provider = MagicMock()
+    mock_provider.apply_labels.side_effect = RuntimeError("Gmail API 503 Service Unavailable")
+    monkeypatch.setattr(service.action_engine, "_get_remote_provider", lambda acc_id: mock_provider)
+
+    res = service.execute_sync(account_id=1, sync_remote=True)
+    assert len(res["operation_ids"]) == 1
+
+    with db.connect() as conn:
+        op = conn.execute("SELECT status FROM operations WHERE id = ?;", (res["operation_ids"][0],)).fetchone()
+        assert op["status"] == "completed_with_errors"
+        item = conn.execute("SELECT error_message FROM operation_items WHERE operation_id = ?;", (res["operation_ids"][0],)).fetchone()
+        assert "Gmail API 503" in item["error_message"]
+
 
 

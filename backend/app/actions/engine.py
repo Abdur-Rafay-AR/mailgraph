@@ -326,6 +326,16 @@ class ActionEngine:
                             remote_provider.apply_labels(target_pids, add_labels=[label_name])
                     except Exception as ex:
                         print(f"Warning: remote mailbox operation failed: {ex}")
+                        cursor.execute("""
+                            UPDATE operations
+                            SET status = 'completed_with_errors'
+                            WHERE id = ?;
+                        """, (operation_id,))
+                        cursor.execute("""
+                            UPDATE operation_items
+                            SET error_message = ?
+                            WHERE operation_id = ?;
+                        """, (str(ex), operation_id))
                     finally:
                         if hasattr(remote_provider, "disconnect"):
                             remote_provider.disconnect()

@@ -28,7 +28,7 @@ def get_label_for_category(category: str) -> str:
     """Return the designated Gmail/provider label name for a given category."""
     if category in CATEGORY_GMAIL_LABEL_MAP:
         return CATEGORY_GMAIL_LABEL_MAP[category]
-    return f"MailGraph/{category.capitalize()}"
+    return f"MailGraph/{category.replace('_', ' ').title()}"
 
 
 class CategoryLabelSyncService:
@@ -48,7 +48,6 @@ class CategoryLabelSyncService:
             FROM message_categories mc
             JOIN categories c ON mc.category_id = c.id
             JOIN messages m ON mc.message_id = m.id
-            LEFT JOIN senders s ON m.sender_id = s.id
             WHERE m.account_id = ?
               AND (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
               AND (
@@ -171,6 +170,9 @@ class CategoryLabelSyncService:
         """
         Undo all operations linked to a specific batch_id by removing applied labels.
         """
+        if not batch_id or not isinstance(batch_id, str) or not batch_id.strip():
+            return {"batch_id": batch_id, "undone_count": 0, "operation_ids": []}
+
         with self.db.connect() as conn:
             cursor = conn.cursor()
             cursor.execute("""
