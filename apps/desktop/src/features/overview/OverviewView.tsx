@@ -11,12 +11,15 @@ import {
   GitFork,
   Trash2,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Tag,
+  Sparkles,
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { OverviewStats } from '../../types/api';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
+import { CategorySyncModal } from './CategorySyncModal';
 
 interface OverviewViewProps {
   accountId?: number;
@@ -36,6 +39,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [demoLoading, setDemoLoading] = useState<boolean>(false);
+  const [syncModalOpen, setSyncModalOpen] = useState<boolean>(false);
 
   const fetchStats = async () => {
     setLoading(true);
@@ -212,6 +216,36 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
       </div>
 
+      {/* Gmail Category Sync Banner */}
+      <div className="p-4 bg-bg-surface border border-border-subtle hover:border-brand/60 transition-all rounded-none shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3.5">
+          <div className="p-2.5 bg-brand/10 border border-brand/30 text-brand rounded-none shrink-0 mt-0.5">
+            <Tag className="w-5 h-5 text-brand" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white uppercase tracking-tight font-sans">
+                Gmail Category Tagging & Sync
+              </h3>
+              <Badge label="1-Click Tagging" variant="subtle" className="text-[10px] text-brand-light border-brand/30" />
+            </div>
+            <p className="text-xs text-slate-300 max-w-2xl font-mono leading-relaxed">
+              Tag your original Gmail inbox with MailGraph categories (e.g. MailGraph/Finance, MailGraph/Receipts, MailGraph/Newsletters) so you can organize and filter directly within Gmail.
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 flex items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setSyncModalOpen(true)}
+            icon={<Sparkles className="w-3.5 h-3.5 text-white" />}
+          >
+            Sync Categories to Gmail
+          </Button>
+        </div>
+      </div>
+
       {/* Two Column Section: Top Senders vs Category Distribution */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top Dominant Senders */}
@@ -348,6 +382,14 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Gmail Category Sync Modal */}
+      <CategorySyncModal
+        isOpen={syncModalOpen}
+        onClose={() => setSyncModalOpen(false)}
+        accountId={accountId}
+        onSyncSuccess={fetchStats}
+      />
     </div>
   );
 };
