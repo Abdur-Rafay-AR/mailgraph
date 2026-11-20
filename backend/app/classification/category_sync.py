@@ -52,7 +52,7 @@ class CategoryLabelSyncService:
             WHERE m.account_id = ?
               AND (m.folder_id IS NULL OR m.folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')))
               AND (
-                  (m.sender_id IS NULL OR s.is_protected = 0)
+                  (m.sender_id IS NULL OR m.sender_id NOT IN (SELECT id FROM senders WHERE is_protected = 1))
                   AND m.sender_address NOT IN (SELECT rule_value FROM protection_rules WHERE rule_type = 'sender' AND enabled = 1)
                   AND NOT EXISTS (
                       SELECT 1 FROM protection_rules pr
@@ -121,12 +121,26 @@ class CategoryLabelSyncService:
                 exclude_protected=True
             )
 
-            # Check if there are any target messages before dispatching operation
-            count_sql, count_params = self.action_engine.compiler.compile_sql(ast, count_only=True)
+            # Check candidate messages and exclude those already successfully labeled with target_label
+            sql, params = self.action_engine.compiler.compile_sql(ast, count_only=False)
             with self.db.connect() as conn:
-                target_count = conn.execute(count_sql, count_params).fetchone()[0]
+                candidate_rows = conn.execute(sql, params).fetchall()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT DISTINCT oi.message_id
+                    FROM operation_items oi
+                    JOIN operations o ON oi.operation_id = o.id
+                    WHERE o.account_id = ?
+                      AND o.operation_type = 'label'
+                      AND o.status != 'undone'
+                      AND oi.status = 'success'
+                      AND json_extract(oi.result_state_json, '$.added_label') = ?;
+                """, (account_id, target_label))
+                already_labeled_ids = {row[0] for row in cursor.fetchall()}
 
-            if target_count == 0:
+            unlabeled_ids = [r["id"] for r in candidate_rows if r["id"] not in already_labeled_ids]
+            if not unlabeled_ids:
+                # All messages in this category are already labeled with target_label; skip operation creation
                 continue
 
             op_id = self.action_engine.execute_action(
@@ -135,7 +149,8 @@ class CategoryLabelSyncService:
                 ast=ast,
                 label_name=target_label,
                 batch_id=batch_id,
-                sync_remote=sync_remote
+                sync_remote=sync_remote,
+                target_message_ids=unlabeled_ids
             )
 
             with self.db.connect() as conn:

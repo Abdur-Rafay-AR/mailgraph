@@ -219,3 +219,50 @@ def test_category_sync_unmapped_custom_category(tmp_path):
         item = conn.execute("SELECT result_state_json FROM operation_items WHERE operation_id = ?;", (res["operation_ids"][0],)).fetchone()
         assert json.loads(item["result_state_json"]).get("added_label") == "MailGraph/Consulting"
 
+
+def test_category_sync_idempotency_and_resume(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "sync_idempotent.db"))
+    db.initialize()
+
+    with db.connect() as conn:
+        conn.execute("INSERT INTO accounts (id, provider, display_name, email_address) VALUES (1, 'synthetic', 'User', 'u@test.com');")
+        conn.execute("INSERT INTO folders (id, account_id, provider_folder_id, name) VALUES (1, 1, 'INBOX', 'INBOX');")
+        conn.execute("INSERT INTO senders (id, normalized_address, domain) VALUES (1, 'bank@nayapay.com', 'nayapay.com');")
+        conn.execute("INSERT INTO messages (id, account_id, provider_message_id, folder_id, sender_id, sender_address, received_at) VALUES (1, 1, 'msg_fin_1', 1, 1, 'bank@nayapay.com', '2026-01-01');")
+
+        fin_id = conn.execute("SELECT id FROM categories WHERE name = 'finance';").fetchone()[0]
+        conn.execute("INSERT INTO message_categories (message_id, category_id, source) VALUES (1, ?, 'rule');", (fin_id,))
+
+    service = CategoryLabelSyncService(db)
+    mock_provider = MagicMock()
+    mock_provider.apply_labels.return_value = {"status": "success", "count": 1}
+    monkeypatch.setattr(service.action_engine, "_get_remote_provider", lambda acc_id: mock_provider)
+
+    # 1. First sync labels msg_fin_1
+    res1 = service.execute_sync(account_id=1, sync_remote=True)
+    assert res1["labeled_count"] == 1
+    assert len(res1["operation_ids"]) == 1
+    assert mock_provider.apply_labels.call_count == 1
+    mock_provider.apply_labels.assert_called_with(["msg_fin_1"], add_labels=["MailGraph/Finance"])
+
+    # 2. Second sync on same account: all messages already labeled, zero duplicate operations/provider calls
+    mock_provider.reset_mock()
+    res2 = service.execute_sync(account_id=1, sync_remote=True)
+    assert res2["labeled_count"] == 0
+    assert res2["operation_ids"] == []
+    assert not mock_provider.apply_labels.called
+
+    # 3. Add a new message to the finance category
+    with db.connect() as conn:
+        conn.execute("INSERT INTO messages (id, account_id, provider_message_id, folder_id, sender_id, sender_address, received_at) VALUES (2, 1, 'msg_fin_2', 1, 1, 'bank@nayapay.com', '2026-01-02');")
+        conn.execute("INSERT INTO message_categories (message_id, category_id, source) VALUES (2, ?, 'rule');", (fin_id,))
+
+    # 4. Third sync: only the 1 new message is labeled (resumes delta)
+    mock_provider.reset_mock()
+    res3 = service.execute_sync(account_id=1, sync_remote=True)
+    assert res3["labeled_count"] == 1
+    assert len(res3["operation_ids"]) == 1
+    assert mock_provider.apply_labels.call_count == 1
+    mock_provider.apply_labels.assert_called_with(["msg_fin_2"], add_labels=["MailGraph/Finance"])
+
+
