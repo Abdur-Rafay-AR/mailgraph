@@ -56,12 +56,18 @@ class IngestionPipeline:
                 cursor.execute("SELECT name, id FROM categories;")
                 category_cache: Dict[str, int] = {row[0]: row[1] for row in cursor.fetchall()}
                 
-                # Cache existing provider message IDs for this account for fast deduplication
-                cursor.execute("SELECT provider_message_id FROM messages WHERE account_id = ?;", (account_id,))
-                existing_pids = {row[0] for row in cursor.fetchall()}
-                
-                cursor.execute("SELECT content_hash FROM messages WHERE account_id = ? AND content_hash IS NOT NULL;", (account_id,))
-                existing_hashes = {row[0] for row in cursor.fetchall()}
+                # Cache existing provider message IDs and content hashes with read/star flags
+                cursor.execute("""
+                    SELECT id, provider_message_id, content_hash, is_read, is_starred, is_important
+                    FROM messages WHERE account_id = ?;
+                """, (account_id,))
+                existing_by_pid: Dict[str, tuple[int, int, int, int]] = {}
+                existing_by_hash: Dict[str, tuple[int, int, int, int]] = {}
+                for row in cursor.fetchall():
+                    state = (row[0], row[3], row[4], row[5])
+                    existing_by_pid[row[1]] = state
+                    if row[2]:
+                        existing_by_hash[row[2]] = state
 
                 # Cache existing threads for fast thread resolution
                 cursor.execute("SELECT id, provider_thread_id, subject_normalized FROM threads WHERE account_id = ?;", (account_id,))
@@ -83,12 +89,36 @@ class IngestionPipeline:
 
                     res.scanned_count += 1
 
-                    # Deduplication check
-                    if email_msg.provider_message_id in existing_pids:
-                        res.skipped_count += 1
-                        continue
-                    if email_msg.content_hash and email_msg.content_hash in existing_hashes:
-                        res.skipped_count += 1
+                    # Deduplication check + flag sync for previously ingested messages
+                    existing_state = existing_by_pid.get(email_msg.provider_message_id)
+                    if existing_state is None and email_msg.content_hash:
+                        existing_state = existing_by_hash.get(email_msg.content_hash)
+
+                    if existing_state is not None:
+                        msg_db_id, old_read, old_starred, old_imp = existing_state
+                        new_read = 1 if email_msg.is_read else 0
+                        new_starred = 1 if email_msg.is_starred else 0
+                        new_imp = 1 if email_msg.is_important else 0
+                        if (new_read, new_starred, new_imp) != (old_read, old_starred, old_imp):
+                            cursor.execute("""
+                                UPDATE messages
+                                SET is_read = ?, is_starred = ?, is_important = ?, updated_at = datetime('now')
+                                WHERE id = ?;
+                            """, (new_read, new_starred, new_imp, msg_db_id))
+                            new_state = (msg_db_id, new_read, new_starred, new_imp)
+                            existing_by_pid[email_msg.provider_message_id] = new_state
+                            if email_msg.content_hash:
+                                existing_by_hash[email_msg.content_hash] = new_state
+                            res.updated_count += 1
+                            batch_count += 1
+                            if batch_count >= 100:
+                                conn.commit()
+                                batch_count = 0
+                        else:
+                            res.skipped_count += 1
+
+                        if progress_callback and res.scanned_count % 15 == 0:
+                            progress_callback(res)
                         continue
 
                     cursor.execute("SAVEPOINT msg_insert;")
@@ -171,9 +201,15 @@ class IngestionPipeline:
                         cursor.execute("RELEASE SAVEPOINT msg_insert;")
 
                         # Update local caches
-                        existing_pids.add(email_msg.provider_message_id)
+                        inserted_state = (
+                            message_id,
+                            1 if email_msg.is_read else 0,
+                            1 if email_msg.is_starred else 0,
+                            1 if email_msg.is_important else 0,
+                        )
+                        existing_by_pid[email_msg.provider_message_id] = inserted_state
                         if email_msg.content_hash:
-                            existing_hashes.add(email_msg.content_hash)
+                            existing_by_hash[email_msg.content_hash] = inserted_state
                         res.inserted_count += 1
                         batch_count += 1
 
@@ -300,9 +336,10 @@ class IngestionPipeline:
                     completed_at = datetime('now'),
                     scanned_count = ?,
                     inserted_count = ?,
+                    updated_count = ?,
                     failed_count = ?
                 WHERE id = ?;
-            """, (res.scanned_count, res.inserted_count, res.failed_count, sync_run_id))
+            """, (res.scanned_count, res.inserted_count, res.updated_count, res.failed_count, sync_run_id))
 
     def _fail_sync_run(self, sync_run_id: int, error_msg: str) -> None:
         with self.db.connect() as conn:

@@ -22,12 +22,14 @@ import { Modal } from '../../components/Modal';
 
 interface SendersViewProps {
   accountId?: number;
+  refreshTrigger?: number;
   onOpenCleanupWithSenders?: (senderAddresses: string[], op: 'trash' | 'archive') => void;
   onOpenMessagesWithSender?: (senderAddress: string) => void;
 }
 
 export const SendersView: React.FC<SendersViewProps> = ({
   accountId,
+  refreshTrigger = 0,
   onOpenCleanupWithSenders,
   onOpenMessagesWithSender,
 }) => {
@@ -58,8 +60,8 @@ export const SendersView: React.FC<SendersViewProps> = ({
   const [cleanupStatusText, setCleanupStatusText] = useState<string>('Preparing cleanup...');
   const [cleanupSuccessMsg, setCleanupSuccessMsg] = useState<string | null>(null);
 
-  const fetchSenders = async () => {
-    setLoading(true);
+  const fetchSenders = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await api.getSenders({
         account_id: accountId,
@@ -75,13 +77,19 @@ export const SendersView: React.FC<SendersViewProps> = ({
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchSenders();
+    fetchSenders(false);
   }, [search, categoryFilter, sortBy, sortDir, page, accountId]);
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      fetchSenders(true);
+    }
+  }, [refreshTrigger]);
 
   // Load individual sender detail
   const handleOpenDetail = async (senderId: number) => {

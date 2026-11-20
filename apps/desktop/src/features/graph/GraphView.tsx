@@ -24,6 +24,7 @@ import { Badge } from '../../components/Badge';
 
 interface GraphViewProps {
   accountId?: number;
+  refreshTrigger?: number;
   onNavigateToMessages?: (senderAddress?: string) => void;
   onNavigateToCleanup?: (query: QueryAST) => void;
 }
@@ -32,6 +33,7 @@ type LayoutMode = 'galaxy' | 'hierarchy' | 'radial' | 'matrix';
 
 export const GraphView: React.FC<GraphViewProps> = ({
   accountId,
+  refreshTrigger = 0,
   onNavigateToMessages,
   onNavigateToCleanup,
 }) => {
@@ -383,7 +385,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
   useEffect(() => {
     fetchAndRenderGraph();
-  }, [level, selectedDomain, categoryFilter, sizeMetric, accountId]);
+  }, [level, selectedDomain, categoryFilter, sizeMetric, accountId, refreshTrigger]);
 
   useEffect(() => {
     return () => {

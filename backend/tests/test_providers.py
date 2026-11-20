@@ -558,6 +558,48 @@ def test_gmail_provider_trash_archive_restore_and_stream():
         assert streamed[0].is_starred is True
 
 
+def test_imap_stream_messages_flags_and_known_state_skip():
+    provider = ImapProvider(host="imap.gmail.com", username="u@gmail.com", password="pwd")
+    mock_client = MagicMock()
+    provider.client = mock_client
+
+    # Verify All Mail detection
+    mock_client.list.return_value = (
+        "OK",
+        [
+            b'(\\HasNoChildren) "/" "INBOX"',
+            b'(\\HasNoChildren \\All) "/" "[Gmail]/All Mail"',
+        ],
+    )
+    assert provider.get_all_mail_folder_name() == "[Gmail]/All Mail"
+
+    # Simulate UID 101 (already known as unread) becoming read, and UID 102 (new, post-literal FLAGS)
+    mock_client.select.return_value = ("OK", [b"2"])
+    mock_client.uid.side_effect = [
+        ("OK", [b"101 102"]),  # SEARCH ALL
+        ("OK", [b"1 (UID 101 FLAGS (\\Seen))"]),  # FETCH 101 (UID FLAGS)
+        ("OK", [  # FETCH 102 (BODY.PEEK[] FLAGS) with post-literal FLAGS
+            (b"2 (UID 102 BODY[] {42}", b"From: a@b.com\r\nSubject: Hi\r\n\r\nHello"),
+            b" FLAGS (\\Seen \\Flagged))",
+        ]),
+    ]
+
+    recorded_updates = []
+    known = {"imap_[Gmail]/All Mail_101": (False, False)}
+    msgs = list(
+        provider.stream_messages(
+            folder_id="[Gmail]/All Mail",
+            known_state=known,
+            on_flag_updates=lambda updates, checked: recorded_updates.extend(updates),
+        )
+    )
+    assert recorded_updates == [("imap_[Gmail]/All Mail_101", True, False)]
+    assert len(msgs) == 1
+    assert msgs[0].provider_message_id == "imap_[Gmail]/All Mail_102"
+    assert msgs[0].is_read is True
+    assert msgs[0].is_starred is True
+
+
 
 
 

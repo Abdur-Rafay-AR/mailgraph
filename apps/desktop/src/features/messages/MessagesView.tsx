@@ -26,6 +26,7 @@ import { TagMessagesModal } from './TagMessagesModal';
 
 interface MessagesViewProps {
   accountId?: number;
+  refreshTrigger?: number;
   initialSearch?: string;
   initialSender?: string;
   onClearSenderFilter?: () => void;
@@ -34,6 +35,7 @@ interface MessagesViewProps {
 
 export const MessagesView: React.FC<MessagesViewProps> = ({
   accountId,
+  refreshTrigger = 0,
   initialSearch = '',
   initialSender = '',
   onClearSenderFilter,
@@ -168,8 +170,8 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
     }
   };
 
-  const fetchMessages = async () => {
-    setLoading(true);
+  const fetchMessages = async (silent = false) => {
+    if (!silent) setLoading(true);
     setActionError(null);
     try {
       const ast = getCurrentSearchQuery();
@@ -188,13 +190,19 @@ export const MessagesView: React.FC<MessagesViewProps> = ({
       console.error(err);
       setActionError(err.message || 'Failed to search messages');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchMessages();
+    fetchMessages(false);
   }, [searchTerm, selectedCategory, unreadOnly, hasAttachmentsOnly, starredOnly, excludeProtected, senderFilter, sortBy, sortDir, page, accountId]);
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      fetchMessages(true);
+    }
+  }, [refreshTrigger]);
 
   // Handle Export CSV using the exact active search query
   const handleExportCsv = async () => {

@@ -284,6 +284,7 @@ export interface SyncJob {
   total_count: number;
   scanned_count: number;
   inserted_count: number;
+  updated_count?: number;
   skipped_count: number;
   failed_count: number;
   pct: number;
