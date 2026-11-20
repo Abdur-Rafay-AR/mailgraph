@@ -1,8 +1,10 @@
 """Deterministic heuristic classification engine for email categorization."""
 
+from __future__ import annotations
 import re
-from typing import Tuple, Optional
-from backend.app.ingestion.mime_parser import ParsedEmail
+from typing import Tuple, Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    from backend.app.ingestion.mime_parser import ParsedEmail
 
 SECURITY_PATTERNS = re.compile(
     r"(security alert|password reset|two-factor|2fa|verify your (email|identity|account)|verification code|"
