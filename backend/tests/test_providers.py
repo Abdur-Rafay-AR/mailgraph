@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, patch
 from backend.app.security.credential_store import CredentialStore
 from backend.app.providers.imap import ImapProvider
 from backend.app.providers.gmail import GmailProvider
+from backend.app.providers.exceptions import UIDValidityChangedError
+from backend.app.providers.base import AbstractMailProvider, ProviderCapabilities
 
 def test_credential_store_save_and_retrieve():
     store = CredentialStore(service_name="MailGraph_Test")
@@ -70,3 +72,28 @@ def test_imap_provider_remote_trash_and_archive_calls(monkeypatch):
     restore_res = provider.restore_messages(pids, dest_folder="INBOX")
     assert restore_res["status"] == "success"
     assert restore_res["count"] == 2
+
+def test_base_provider_label_interface():
+    class DummyProvider(AbstractMailProvider):
+        def get_capabilities(self):
+            return ProviderCapabilities(supports_labels=True)
+        def connect(self):
+            return True
+        def list_folders(self):
+            return []
+        def stream_messages(self, folder_id=None, limit=None):
+            yield from ()
+
+    p = DummyProvider()
+    assert p.get_capabilities().supports_labels is True
+    assert p.list_labels() == []
+    with pytest.raises(NotImplementedError):
+        p.apply_labels(["imap_INBOX_1"], add_labels=["MailGraph/Finance"])
+
+def test_uid_validity_changed_error():
+    err = UIDValidityChangedError("INBOX", "123", "456")
+    assert err.folder == "INBOX"
+    assert err.expected == "123"
+    assert err.actual == "456"
+    assert "UIDVALIDITY mismatch for folder 'INBOX': expected 123, got 456" in str(err)
+
