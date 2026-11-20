@@ -13,3 +13,12 @@ test_db = test_dir / "test_mailgraph.db"
 os.environ["MAILGRAPH_DATA_DIR"] = str(test_dir)
 os.environ["MAILGRAPH_DB_PATH"] = str(test_db)
 os.environ["MAILGRAPH_CREDENTIAL_SERVICE_NAME"] = "MailGraphTest"
+
+import pytest
+
+@pytest.fixture
+def client():
+    from fastapi.testclient import TestClient
+    from backend.app.main import app
+    return TestClient(app)
+

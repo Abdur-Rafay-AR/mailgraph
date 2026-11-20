@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 import sqlite3
 from typing import List, Dict, Any
 
-from backend.app.db.database import get_db, get_database
+from backend.app.db.database import Database, get_db, get_database
 from backend.app.models.schemas import CleanupPreviewRequest, CleanupExecuteRequest, CleanupUndoRequest
 from backend.app.search.query_compiler import QueryAST, QueryCondition
 from backend.app.actions.engine import ActionEngine
+from backend.app.api.routes_accounts import _verify_account_active
 
 router = APIRouter(prefix="/api/cleanup", tags=["cleanup"])
 
@@ -20,9 +21,13 @@ def calculate_cleanup_preview(req: CleanupPreviewRequest):
     if not account_id:
         with db.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM accounts LIMIT 1;")
+            cursor.execute("SELECT id FROM accounts WHERE status = 'active' LIMIT 1;")
             acc = cursor.fetchone()
-            account_id = acc[0] if acc else 1
+            if not acc:
+                raise HTTPException(status_code=404, detail="No active account found.")
+            account_id = acc[0]
+        
+    _verify_account_active(account_id, db)
         
     engine = ActionEngine(db)
     
@@ -35,7 +40,10 @@ def calculate_cleanup_preview(req: CleanupPreviewRequest):
         exclude_protected=req.query.exclude_protected
     )
     
-    preview = engine.calculate_preview(account_id, req.operation_type, ast)
+    try:
+        preview = engine.calculate_preview(account_id, req.operation_type, ast, label_name=req.label_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "operation_type": preview.operation_type,
         "account_id": preview.account_id,
@@ -59,9 +67,13 @@ def execute_cleanup(req: CleanupExecuteRequest):
     if not account_id:
         with db.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM accounts LIMIT 1;")
+            cursor.execute("SELECT id FROM accounts WHERE status = 'active' LIMIT 1;")
             acc = cursor.fetchone()
-            account_id = acc[0] if acc else 1
+            if not acc:
+                raise HTTPException(status_code=404, detail="No active account found.")
+            account_id = acc[0]
+        
+    _verify_account_active(account_id, db)
         
     engine = ActionEngine(db)
     
@@ -74,7 +86,10 @@ def execute_cleanup(req: CleanupExecuteRequest):
         exclude_protected=req.query.exclude_protected
     )
     
-    op_id = engine.execute_action(account_id, req.operation_type, ast)
+    try:
+        op_id = engine.execute_action(account_id, req.operation_type, ast, label_name=req.label_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     with db.connect() as conn:
         cursor = conn.cursor()
@@ -100,7 +115,10 @@ def undo_cleanup(req: CleanupUndoRequest):
     """Restore messages from a previous bulk operation."""
     db = get_database()
     engine = ActionEngine(db)
-    return engine.undo_operation(req.operation_id)
+    try:
+        return engine.undo_operation(req.operation_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.get("/operations")
 def list_operations(conn: sqlite3.Connection = Depends(get_db)):

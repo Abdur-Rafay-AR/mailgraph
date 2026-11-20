@@ -5,8 +5,17 @@ from fastapi import APIRouter, Depends, HTTPException
 import sqlite3
 from typing import List, Dict, Any, Optional
 
-from backend.app.db.database import get_db, get_database
-from backend.app.models.schemas import AccountCreate, AccountResponse, AccountStatusUpdate, SyntheticGenerateRequest, ImapConnectRequest
+from backend.app.db.database import Database, get_db, get_database
+from backend.app.models.schemas import (
+    AccountCreate,
+    AccountResponse,
+    AccountStatusUpdate,
+    SyntheticGenerateRequest,
+    ImapConnectRequest,
+    CategorySyncExecuteRequest,
+    CategorySyncUndoRequest,
+)
+from backend.app.classification import CategoryLabelSyncService
 from backend.app.ingestion.pipeline import IngestionPipeline
 from backend.app.providers.synthetic import SyntheticMailboxGenerator
 from backend.app.providers.mbox import MboxProvider
@@ -101,6 +110,7 @@ def delete_account(account_id: int, conn: sqlite3.Connection = Depends(get_db)):
     """)
     return {"status": "success", "deleted_account_id": account_id}
 
+@router.post("/synthetic")
 @router.post("/synthetic/generate")
 def generate_synthetic(req: SyntheticGenerateRequest):
     """Generate and index realistic synthetic mailbox emails for testing and demo."""
@@ -322,3 +332,45 @@ def stop_active_sync():
     from backend.app.ingestion.sync_manager import sync_manager
     stopped = sync_manager.stop_active_sync()
     return {"status": "stopping" if stopped else "no_active_job"}
+
+
+def _verify_account_active(account_id: int, db: Database) -> Dict[str, Any]:
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, status FROM accounts WHERE id = ?;", (account_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        if row["status"] == "paused":
+            raise HTTPException(status_code=400, detail="Cannot sync a disabled/paused account. Please re-enable it first.")
+        return dict(row)
+
+
+@router.post("/{account_id}/sync-labels/preview")
+def preview_category_label_sync(account_id: int):
+    """Calculate preview counts of messages grouped by category for label synchronization."""
+    db = get_database()
+    _verify_account_active(account_id, db)
+    service = CategoryLabelSyncService(db)
+    return service.preview_sync(account_id)
+
+
+@router.post("/{account_id}/sync-labels/execute")
+def execute_category_label_sync(account_id: int, req: Optional[CategorySyncExecuteRequest] = None):
+    """Execute label synchronization for specified categories (or all eligible categories)."""
+    db = get_database()
+    _verify_account_active(account_id, db)
+    service = CategoryLabelSyncService(db)
+    categories = req.categories if req else None
+    batch_id = req.batch_id if req else None
+    return service.execute_sync(account_id, categories=categories, batch_id=batch_id)
+
+
+@router.post("/{account_id}/sync-labels/undo")
+def undo_category_label_sync(account_id: int, req: CategorySyncUndoRequest):
+    """Roll back applied labels for a specific category sync batch."""
+    db = get_database()
+    _verify_account_active(account_id, db)
+    service = CategoryLabelSyncService(db)
+    return service.undo_batch(req.batch_id, account_id=account_id)
+
