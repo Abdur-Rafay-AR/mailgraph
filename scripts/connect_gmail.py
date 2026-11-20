@@ -24,7 +24,7 @@ if root_dir not in sys.path:
 from backend.app.db.database import get_database
 from backend.app.security.credential_store import CredentialStore
 from backend.app.providers.imap import ImapProvider
-from backend.app.providers.gmail import GmailProvider, READONLY_SCOPE
+from backend.app.providers.gmail import GmailProvider, MODIFY_SCOPE
 from backend.app.ingestion.pipeline import IngestionPipeline
 
 def print_banner():
@@ -202,7 +202,7 @@ def connect_via_oauth():
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": READONLY_SCOPE,
+        "scope": MODIFY_SCOPE,
         "access_type": "offline",
         "prompt": "consent",
         "state": email_addr
