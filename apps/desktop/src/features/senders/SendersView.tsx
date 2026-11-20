@@ -35,10 +35,13 @@ export const SendersView: React.FC<SendersViewProps> = ({
   const [totalCount, setTotalCount] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [sortBy, setSortBy] = useState<string>('message_count');
   const [sortDir, setSortDir] = useState<string>('DESC');
+  const [page, setPage] = useState<number>(1);
+  const pageSize = 50;
   const [selectedSenderIds, setSelectedSenderIds] = useState<Set<number>>(new Set());
-  
+
   // Sender detail modal
   const [activeSenderId, setActiveSenderId] = useState<number | null>(null);
   const [senderDetail, setSenderDetail] = useState<SenderDetail | null>(null);
@@ -48,6 +51,8 @@ export const SendersView: React.FC<SendersViewProps> = ({
   const [cleanupModalOpen, setCleanupModalOpen] = useState<boolean>(false);
   const [cleanupOperation, setCleanupOperation] = useState<'trash' | 'archive'>('trash');
   const [bulkPreview, setBulkPreview] = useState<any>(null);
+  const [bulkPreviewError, setBulkPreviewError] = useState<string | null>(null);
+  const [bulkExecuteError, setBulkExecuteError] = useState<string | null>(null);
   const [executingCleanup, setExecutingCleanup] = useState<boolean>(false);
   const [cleanupProgress, setCleanupProgress] = useState<number>(0);
   const [cleanupStatusText, setCleanupStatusText] = useState<string>('Preparing cleanup...');
@@ -59,10 +64,11 @@ export const SendersView: React.FC<SendersViewProps> = ({
       const res = await api.getSenders({
         account_id: accountId,
         search,
+        category: categoryFilter || undefined,
         sort_by: sortBy,
         sort_dir: sortDir,
-        page: 1,
-        page_size: 100,
+        page,
+        page_size: pageSize,
       });
       setSenders(res.items);
       setTotalCount(res.total_count);
@@ -75,7 +81,7 @@ export const SendersView: React.FC<SendersViewProps> = ({
 
   useEffect(() => {
     fetchSenders();
-  }, [search, sortBy, sortDir, accountId]);
+  }, [search, categoryFilter, sortBy, sortDir, page, accountId]);
 
   // Load individual sender detail
   const handleOpenDetail = async (senderId: number) => {
@@ -150,17 +156,21 @@ export const SendersView: React.FC<SendersViewProps> = ({
     setCleanupProgress(0);
     setCleanupStatusText('Preparing cleanup...');
     setCleanupSuccessMsg(null);
+    setBulkPreview(null);
+    setBulkPreviewError(null);
+    setBulkExecuteError(null);
     setCleanupModalOpen(true);
     try {
       const preview = await api.previewBulkSendersCleanup({
         sender_ids: Array.from(selectedSenderIds),
         operation_type: op,
         exclude_protected: true,
+        account_id: accountId,
       });
       setBulkPreview(preview);
     } catch (err: any) {
       console.error(err);
-      alert(err.message || 'Failed to calculate cleanup preview');
+      setBulkPreviewError(err.message || 'Failed to calculate cleanup preview');
     }
   };
 
@@ -168,6 +178,7 @@ export const SendersView: React.FC<SendersViewProps> = ({
   const handleExecuteConfirmedBulkCleanup = async () => {
     if (selectedSenderIds.size === 0) return;
     setExecutingCleanup(true);
+    setBulkExecuteError(null);
     setCleanupProgress(15);
     setCleanupStatusText('Verifying target safe-lists and message UIDs...');
 
@@ -192,6 +203,7 @@ export const SendersView: React.FC<SendersViewProps> = ({
         sender_ids: Array.from(selectedSenderIds),
         operation_type: cleanupOperation,
         exclude_protected: true,
+        account_id: accountId,
       });
       clearTimeout(timer1);
       clearTimeout(timer2);
@@ -208,7 +220,7 @@ export const SendersView: React.FC<SendersViewProps> = ({
       clearTimeout(timer1);
       clearTimeout(timer2);
       clearTimeout(timer3);
-      alert(err.message || 'Execution error');
+      setBulkExecuteError(err.message || 'Execution error');
       setExecutingCleanup(false);
       setCleanupProgress(0);
     }
@@ -224,7 +236,10 @@ export const SendersView: React.FC<SendersViewProps> = ({
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
               placeholder="Search senders by name, email address, or domain..."
               className="w-full pl-9 pr-3 py-1.5 bg-bg-deep border border-border-muted rounded text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-light"
             />
@@ -234,12 +249,33 @@ export const SendersView: React.FC<SendersViewProps> = ({
           </span>
         </div>
 
-        {/* Sort Controls */}
+        {/* Filter & Sort Controls */}
         <div className="flex items-center gap-2">
+          <select
+            value={categoryFilter}
+            onChange={(e) => {
+              setCategoryFilter(e.target.value);
+              setPage(1);
+            }}
+            className="bg-bg-deep border border-border-muted rounded px-2.5 py-1 text-xs text-slate-200 focus:outline-none"
+          >
+            <option value="">All Categories</option>
+            <option value="finance">Finance</option>
+            <option value="work">Work</option>
+            <option value="personal">Personal</option>
+            <option value="newsletter">Newsletters</option>
+            <option value="promotional">Promotional</option>
+            <option value="receipt_invoice">Receipts</option>
+            <option value="security">Security</option>
+            <option value="notification">Notifications</option>
+          </select>
           <span className="text-xs text-slate-400">Sort by:</span>
           <select
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
+            onChange={(e) => {
+              setSortBy(e.target.value);
+              setPage(1);
+            }}
             className="bg-bg-deep border border-border-muted rounded px-2.5 py-1 text-xs text-slate-200 focus:outline-none"
           >
             <option value="message_count">Message Volume (High to Low)</option>
@@ -445,6 +481,24 @@ export const SendersView: React.FC<SendersViewProps> = ({
         </table>
       </div>
 
+      {/* Pagination Footer */}
+      {totalCount > pageSize && (
+        <div className="px-4 py-2.5 bg-bg-surface border-t border-border-subtle flex items-center justify-between text-xs text-slate-400 font-mono">
+          <div>
+            Showing {(page - 1) * pageSize + 1} - {Math.min(page * pageSize, totalCount)} of {totalCount}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="xs" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              Previous
+            </Button>
+            <span>Page {page} of {Math.ceil(totalCount / pageSize)}</span>
+            <Button size="xs" variant="outline" disabled={page * pageSize >= totalCount} onClick={() => setPage(page + 1)}>
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Sender Detail Drawer/Modal */}
       <Modal
         isOpen={activeSenderId !== null}
@@ -587,6 +641,13 @@ export const SendersView: React.FC<SendersViewProps> = ({
               Close
             </Button>
           </div>
+        ) : bulkPreviewError ? (
+          <div className="py-6 text-center space-y-3">
+            <div className="text-xs font-mono text-red-400">{bulkPreviewError}</div>
+            <Button size="sm" variant="ghost" onClick={() => setCleanupModalOpen(false)}>
+              Close
+            </Button>
+          </div>
         ) : !bulkPreview ? (
           <div className="py-8 text-center text-slate-400 font-sans text-xs">
             Calculating exact targets and protection exclusions...
@@ -645,6 +706,12 @@ export const SendersView: React.FC<SendersViewProps> = ({
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {bulkExecuteError && (
+              <div className="p-3 rounded bg-red-950/60 border border-red-700 text-red-200 text-xs font-mono">
+                {bulkExecuteError}
               </div>
             )}
 

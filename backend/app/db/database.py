@@ -46,8 +46,9 @@ class Database:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON;")
+        cursor.execute("PRAGMA busy_timeout = 30000;")
+        cursor.execute("PRAGMA cache_size = -16000;")
         if self.db_path != ":memory:":
-            cursor.execute("PRAGMA journal_mode = WAL;")
             cursor.execute("PRAGMA synchronous = NORMAL;")
             cursor.execute("PRAGMA temp_store = MEMORY;")
         return conn
@@ -66,8 +67,10 @@ class Database:
             conn.close()
 
     def initialize(self) -> None:
-        """Run schema migrations on the database."""
+        """Run schema migrations and configure persistent WAL mode on the database."""
         with self.connect() as conn:
+            if self.db_path != ":memory:":
+                conn.execute("PRAGMA journal_mode = WAL;")
             run_migrations(conn)
 
 # Global database instance

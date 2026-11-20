@@ -14,4 +14,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor_react: ['react', 'react-dom'],
+          vendor_cytoscape: ['cytoscape'],
+          vendor_icons: ['lucide-react'],
+        },
+      },
+    },
+  },
 });

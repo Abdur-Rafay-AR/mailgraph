@@ -385,6 +385,15 @@ export const GraphView: React.FC<GraphViewProps> = ({
     fetchAndRenderGraph();
   }, [level, selectedDomain, categoryFilter, sizeMetric, accountId]);
 
+  useEffect(() => {
+    return () => {
+      if (cyRef.current) {
+        cyRef.current.destroy();
+        cyRef.current = null;
+      }
+    };
+  }, []);
+
   // Handle Layout Mode switch without re-fetching data
   const handleApplyLayout = (mode: LayoutMode) => {
     setLayoutMode(mode);
@@ -591,11 +600,16 @@ export const GraphView: React.FC<GraphViewProps> = ({
             <option value="important">Important</option>
             <option value="personal">Personal</option>
             <option value="work">Work</option>
+            <option value="university">University</option>
             <option value="newsletter">Newsletters</option>
             <option value="receipt_invoice">Receipts</option>
             <option value="security">Security</option>
             <option value="promotional">Promotional</option>
             <option value="transactional">Transactional</option>
+            <option value="notification">Notifications</option>
+            <option value="social">Social</option>
+            <option value="calendar">Calendar</option>
+            <option value="automated_report">Automated Reports</option>
           </select>
 
           <Button
@@ -616,6 +630,13 @@ export const GraphView: React.FC<GraphViewProps> = ({
           <div className="absolute inset-0 bg-bg-deep/80 backdrop-blur-sm flex flex-col items-center justify-center z-20 text-xs font-mono text-slate-300 gap-2">
             <RefreshCw className="w-6 h-6 animate-spin text-brand" />
             <span>Simulating network physics and orbital clusters...</span>
+          </div>
+        )}
+
+        {!loading && nodeCount === 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center z-10 text-xs font-mono text-slate-400 gap-2 pointer-events-none">
+            <GitFork className="w-6 h-6 text-slate-600" />
+            <span>No nodes matched the active graph scope or filters.</span>
           </div>
         )}
 
@@ -732,7 +753,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
         {/* Node Detail Side Panel */}
         {selectedNode && (
-          <div className="absolute top-4 right-4 w-84 bg-bg-surface border border-border-muted shadow-2xl rounded-none p-4 space-y-3 z-20 animate-fadeIn text-xs text-slate-200 font-mono">
+          <div className="absolute top-4 right-4 w-80 bg-bg-surface border border-border-muted shadow-2xl rounded-none p-4 space-y-3 z-20 animate-fadeIn text-xs text-slate-200 font-mono">
             <div className="flex items-start justify-between border-b border-border-subtle pb-2.5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-brand font-bold">

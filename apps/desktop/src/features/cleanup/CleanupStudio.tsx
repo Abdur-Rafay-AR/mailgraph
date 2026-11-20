@@ -32,10 +32,18 @@ const PRESET_LABELS = [
 ];
 
 interface CleanupStudioProps {
+  accountId?: number;
   initialQuery?: QueryAST;
+  onClearInitialQuery?: () => void;
+  onOperationsChanged?: () => void;
 }
 
-export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) => {
+export const CleanupStudio: React.FC<CleanupStudioProps> = ({
+  accountId,
+  initialQuery,
+  onClearInitialQuery,
+  onOperationsChanged,
+}) => {
   const [activeTab, setActiveTab] = useState<'builder' | 'audit'>('builder');
 
   // Query Builder State
@@ -47,6 +55,10 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
   const [excludeProtected, setExcludeProtected] = useState<boolean>(true);
   const [customSearch, setCustomSearch] = useState<string>('');
 
+  // Track the exact AST currently previewed so execution ALWAYS matches preview
+  const [activeAst, setActiveAst] = useState<QueryAST | null>(null);
+  const [isExternalQuery, setIsExternalQuery] = useState<boolean>(false);
+
   // Preview & Execution State
   const [preview, setPreview] = useState<CleanupPreview | null>(null);
   const [calculatingPreview, setCalculatingPreview] = useState<boolean>(false);
@@ -55,6 +67,8 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
   const [execProgress, setExecProgress] = useState<number>(0);
   const [execStatusText, setExecStatusText] = useState<string>('Preparing cleanup...');
   const [executionResult, setExecutionResult] = useState<CleanupOperation | null>(null);
+  const [bannerError, setBannerError] = useState<string | null>(null);
+  const [bannerSuccess, setBannerSuccess] = useState<string | null>(null);
 
   // Audit Log State
   const [operations, setOperations] = useState<CleanupOperation[]>([]);
@@ -64,7 +78,8 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
   // Initialize query if passed from other views
   useEffect(() => {
     if (initialQuery) {
-      handleCalculatePreview(initialQuery);
+      setIsExternalQuery(true);
+      handleCalculatePreview(initialQuery, true);
     }
   }, [initialQuery]);
 
@@ -108,34 +123,50 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
     };
   };
 
-  const handleCalculatePreview = async (overrideAst?: QueryAST) => {
+  const handleCalculatePreview = async (overrideAst?: QueryAST, fromExternal = false) => {
+    setBannerError(null);
+    setBannerSuccess(null);
     if (operationType === 'label' && !labelName.trim()) {
-      alert('Please enter a valid Gmail label name.');
+      setBannerError('Please enter a valid Gmail label name.');
       return;
     }
     const ast = overrideAst || buildQueryAST();
+    if (!fromExternal) {
+      setIsExternalQuery(false);
+    }
+    setActiveAst(ast);
     setCalculatingPreview(true);
     setExecutionResult(null);
     try {
       const res = await api.calculateCleanupPreview({
+        account_id: accountId,
         operation_type: operationType,
         query: ast,
         label_name: operationType === 'label' ? labelName.trim() : undefined,
       });
       setPreview(res);
     } catch (err: any) {
-      alert(err.message || 'Failed to simulate cleanup preview');
+      setBannerError(err.message || 'Failed to simulate cleanup preview');
     } finally {
       setCalculatingPreview(false);
     }
   };
 
+  const handleResetExternalQuery = () => {
+    setIsExternalQuery(false);
+    setActiveAst(null);
+    setPreview(null);
+    onClearInitialQuery?.();
+  };
+
   const handleExecuteOperation = async () => {
     if (!preview) return;
+    setBannerError(null);
     if (operationType === 'label' && !labelName.trim()) {
-      alert('Please enter a valid Gmail label name.');
+      setBannerError('Please enter a valid Gmail label name.');
       return;
     }
+    const astToExecute = activeAst || buildQueryAST();
     setExecuting(true);
     setExecProgress(15);
     setExecStatusText(
@@ -168,10 +199,10 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
     }, 1800);
 
     try {
-      const ast = buildQueryAST();
       const res = await api.executeCleanup({
+        account_id: accountId ?? preview.account_id,
         operation_type: operationType,
-        query: ast,
+        query: astToExecute,
         label_name: operationType === 'label' ? labelName.trim() : undefined,
       });
       clearTimeout(timer1);
@@ -180,6 +211,7 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
       setExecProgress(100);
       setExecStatusText('Operation finalized!');
       setExecutionResult(res);
+      onOperationsChanged?.();
 
       setTimeout(() => {
         setConfirmModalOpen(false);
@@ -191,7 +223,7 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
       clearTimeout(timer1);
       clearTimeout(timer2);
       clearTimeout(timer3);
-      alert(err.message || 'Error executing operation');
+      setBannerError(err.message || 'Error executing operation');
       setExecuting(false);
       setExecProgress(0);
     }
@@ -199,17 +231,20 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
 
   const handleUndo = async (operationId: number) => {
     setUndoingId(operationId);
+    setBannerError(null);
+    setBannerSuccess(null);
     try {
       const res = await api.undoCleanup(operationId);
       const op = operations.find((o) => o.id === operationId);
       if (op?.operation_type === 'label' || (operationType === 'label' && executionResult?.id === operationId)) {
-        alert(`Successfully removed label from ${res.restored_count} messages!`);
+        setBannerSuccess(`Successfully removed label from ${res.restored_count} messages.`);
       } else {
-        alert(`Successfully restored ${res.restored_count} messages back to their original folders!`);
+        setBannerSuccess(`Successfully restored ${res.restored_count} messages back to their original folders.`);
       }
+      onOperationsChanged?.();
       await loadOperations();
     } catch (err: any) {
-      alert(err.message || 'Error executing undo');
+      setBannerError(err.message || 'Error executing undo');
     } finally {
       setUndoingId(null);
     }
@@ -244,8 +279,38 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
         </div>
       </div>
 
+      {bannerError && (
+        <div className="px-6 py-2.5 bg-red-950/70 border-b border-red-700 text-red-200 text-xs font-mono flex items-center justify-between">
+          <span>{bannerError}</span>
+          <button onClick={() => setBannerError(null)} className="text-red-300 hover:text-white font-bold px-2">×</button>
+        </div>
+      )}
+
+      {bannerSuccess && (
+        <div className="px-6 py-2.5 bg-emerald-950/70 border-b border-emerald-700 text-emerald-200 text-xs font-mono flex items-center justify-between">
+          <span>{bannerSuccess}</span>
+          <button onClick={() => setBannerSuccess(null)} className="text-emerald-300 hover:text-white font-bold px-2">×</button>
+        </div>
+      )}
+
       {activeTab === 'builder' ? (
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {isExternalQuery && activeAst && (
+            <div className="p-3.5 bg-brand/10 border border-brand/40 flex items-center justify-between text-xs font-mono">
+              <div className="text-brand-light">
+                <strong>Targeted Selection Active:</strong> Executing against the query handed off from Explorer / Graph / Insights ({activeAst.all?.length || 0} condition{(activeAst.all?.length || 0) === 1 ? '' : 's'}).
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button size="xs" variant="outline" onClick={() => handleCalculatePreview(activeAst, true)}>
+                  Re-simulate with {operationType.toUpperCase()}
+                </Button>
+                <Button size="xs" variant="ghost" onClick={handleResetExternalQuery}>
+                  Clear Selection
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Query Formulation Card */}
           <div className="bg-bg-surface border border-border-subtle rounded-lg p-5 shadow-sm space-y-4">
             <h3 className="text-sm font-semibold text-slate-100 tracking-tight flex items-center gap-2">
@@ -615,8 +680,16 @@ export const CleanupStudio: React.FC<CleanupStudioProps> = ({ initialQuery }) =>
 
               <div className="p-3 bg-bg-deep rounded border border-border-subtle space-y-1 font-mono text-[11px]">
                 <div className="text-slate-400">Target Query Summary:</div>
-                <div className="text-slate-200">• Category: {targetCategory || 'Any'}</div>
-                <div className="text-slate-200">• Age: Older than {daysOld} days</div>
+                {isExternalQuery && activeAst ? (
+                  <div className="text-slate-200">
+                    • Custom Selection Query ({activeAst.all?.map((c) => `${c.field} ${c.op} ${JSON.stringify(c.value)}`).join(' AND ') || 'Filtered set'})
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-slate-200">• Category: {targetCategory || 'Any'}</div>
+                    <div className="text-slate-200">• Age: {daysOld > 0 ? `Older than ${daysOld} days` : 'Any age'}</div>
+                  </>
+                )}
                 {operationType === 'label' && (
                   <div className="text-brand-light font-semibold">• Target Label: {labelName.trim()}</div>
                 )}

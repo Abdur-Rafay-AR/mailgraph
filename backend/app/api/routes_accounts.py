@@ -25,8 +25,6 @@ router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
 @router.get("", response_model=List[AccountResponse])
 def list_accounts(conn: sqlite3.Connection = Depends(get_db)):
-    from backend.app.security.credential_store import reconcile_accounts
-    reconcile_accounts(conn)
     cursor = conn.cursor()
     cursor.execute("""
         SELECT id, provider, display_name, email_address, created_at, last_sync_at, status
@@ -97,12 +95,16 @@ def delete_account(account_id: int, conn: sqlite3.Connection = Depends(get_db)):
     row = cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Account not found")
-        
-    email_address = row["email_address"]
-    from backend.app.security.credential_store import CredentialStore
-    CredentialStore().delete_credentials(email_address)
 
+    email_address = row["email_address"]
     cursor.execute("DELETE FROM accounts WHERE id = ?;", (account_id,))
+
+    # Only delete credentials if no remaining account uses this email address
+    cursor.execute("SELECT 1 FROM accounts WHERE email_address = ? LIMIT 1;", (email_address,))
+    if not cursor.fetchone():
+        from backend.app.security.credential_store import CredentialStore
+        CredentialStore().delete_credentials(email_address)
+
     # Clean up orphan senders with no remaining messages
     cursor.execute("""
         DELETE FROM senders
@@ -150,14 +152,24 @@ def generate_synthetic(req: SyntheticGenerateRequest):
 def import_mbox(account_id: int, file_path: str, limit: Optional[int] = None):
     """Import an offline MBOX archive file into the specified account."""
     db = get_database()
+    _verify_account_active(account_id, db)
+
     provider = MboxProvider(file_path=file_path)
-    provider.connect()
+    try:
+        provider.connect()
+    except FileNotFoundError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+
     pipeline = IngestionPipeline(db)
-    
     result = pipeline.ingest_messages(account_id, provider.stream_messages(limit=limit))
+
+    with db.connect() as conn:
+        conn.execute("UPDATE accounts SET last_sync_at = datetime('now') WHERE id = ?;", (account_id,))
+
     return {
         "status": "success",
         "account_id": account_id,
+        "scanned_count": result.scanned_count,
         "inserted_count": result.inserted_count,
         "skipped_count": result.skipped_count,
         "failed_count": result.failed_count
@@ -167,7 +179,7 @@ def import_mbox(account_id: int, file_path: str, limit: Optional[int] = None):
 def connect_imap(req: ImapConnectRequest, initial_scan_limit: Optional[int] = 100):
     """Authenticate and link a Gmail or IMAP account using an App Password."""
     from backend.app.security.credential_store import CredentialStore
-    
+
     # 1. Test IMAP connection
     provider = ImapProvider(
         host=req.host,
@@ -181,50 +193,53 @@ def connect_imap(req: ImapConnectRequest, initial_scan_limit: Optional[int] = 10
     except Exception as ex:
         raise HTTPException(status_code=400, detail=f"Failed to connect to {req.host}: {str(ex)}")
 
-    # 2. Store credentials in OS Keyring
-    cred_store = CredentialStore()
-    cred_json = json.dumps({
-        "provider": "imap",
-        "host": req.host,
-        "port": req.port,
-        "username": req.username,
-        "password": req.password
-    })
-    cred_store.save_credentials(req.email_address, cred_json)
+    try:
+        # 2. Store credentials in OS Keyring
+        cred_store = CredentialStore()
+        cred_json = json.dumps({
+            "provider": "imap",
+            "host": req.host,
+            "port": req.port,
+            "username": req.username,
+            "password": req.password
+        })
+        cred_store.save_credentials(req.email_address, cred_json)
 
-    # 3. Register in SQLite
-    db = get_database()
-    with db.connect() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM accounts WHERE email_address = ?;", (req.email_address,))
-        row = cursor.fetchone()
-        if row:
-            account_id = row[0]
-            cursor.execute("UPDATE accounts SET status = 'active', last_sync_at = datetime('now') WHERE id = ?;", (account_id,))
-        else:
-            cursor.execute("""
-                INSERT INTO accounts (provider, display_name, email_address, settings_json)
-                VALUES ('imap', ?, ?, ?);
-            """, (req.display_name, req.email_address, json.dumps({"host": req.host, "port": req.port})))
-            account_id = cursor.lastrowid
+        # 3. Register in SQLite
+        db = get_database()
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM accounts WHERE email_address = ?;", (req.email_address,))
+            row = cursor.fetchone()
+            if row:
+                account_id = row[0]
+                cursor.execute("UPDATE accounts SET status = 'active', last_sync_at = datetime('now') WHERE id = ?;", (account_id,))
+            else:
+                cursor.execute("""
+                    INSERT INTO accounts (provider, display_name, email_address, settings_json)
+                    VALUES ('imap', ?, ?, ?);
+                """, (req.display_name, req.email_address, json.dumps({"host": req.host, "port": req.port})))
+                account_id = cursor.lastrowid
 
-    # 4. Run initial scan if requested
-    inserted = 0
-    if initial_scan_limit is not None and initial_scan_limit <= 0:
-        pipeline = IngestionPipeline(db)
-        res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=None))
-        inserted = res.inserted_count
-    elif initial_scan_limit and initial_scan_limit > 0:
-        pipeline = IngestionPipeline(db)
-        res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=initial_scan_limit))
-        inserted = res.inserted_count
+        # 4. Run initial scan if requested
+        inserted = 0
+        if initial_scan_limit is not None and initial_scan_limit <= 0:
+            pipeline = IngestionPipeline(db)
+            res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=None))
+            inserted = res.inserted_count
+        elif initial_scan_limit and initial_scan_limit > 0:
+            pipeline = IngestionPipeline(db)
+            res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=initial_scan_limit))
+            inserted = res.inserted_count
 
-    return {
-        "status": "success",
-        "account_id": account_id,
-        "email_address": req.email_address,
-        "inserted_count": inserted
-    }
+        return {
+            "status": "success",
+            "account_id": account_id,
+            "email_address": req.email_address,
+            "inserted_count": inserted
+        }
+    finally:
+        provider.disconnect()
 
 @router.post("/{account_id}/sync")
 def sync_account(account_id: int, limit: Optional[int] = 100):
@@ -245,43 +260,51 @@ def sync_account(account_id: int, limit: Optional[int] = 100):
         email_address = acc[3]
 
     pipeline = IngestionPipeline(db)
+    remote_provider = None
 
-    if provider_name == "synthetic":
-        generator = SyntheticMailboxGenerator()
-        res = pipeline.ingest_messages(account_id, generator.generate(count=limit or 25))
-    elif provider_name in ("imap", "gmail"):
-        from backend.app.security.credential_store import CredentialStore
-        cred_store = CredentialStore()
-        secret = cred_store.get_credentials(email_address)
-        if not secret:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No stored credentials found in OS Keyring for {email_address}. Please reconnect your account."
-            )
-        try:
-            creds = json.loads(secret)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid credential payload stored in OS Keyring.")
+    try:
+        if provider_name == "synthetic":
+            generator = SyntheticMailboxGenerator()
+            res = pipeline.ingest_messages(account_id, generator.generate(count=limit or 25))
+        elif provider_name in ("imap", "gmail"):
+            from backend.app.security.credential_store import CredentialStore
+            cred_store = CredentialStore()
+            secret = cred_store.get_credentials(email_address)
+            if not secret:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No stored credentials found in OS Keyring for {email_address}. Please reconnect your account."
+                )
+            try:
+                creds = json.loads(secret)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid credential payload stored in OS Keyring.")
 
-        if creds.get("provider") == "imap" or "password" in creds:
-            provider = ImapProvider(
-                host=creds.get("host", "imap.gmail.com"),
-                username=creds.get("username", email_address),
-                password=creds["password"],
-                port=creds.get("port", 993),
-                use_ssl=creds.get("use_ssl", True)
-            )
-            provider.connect()
-            res = pipeline.ingest_messages(account_id, provider.stream_messages(folder_id="INBOX", limit=limit))
-        elif creds.get("provider") == "gmail" or "access_token" in creds:
-            from backend.app.providers.gmail import GmailProvider
-            provider = GmailProvider(token_dict=creds)
-            provider.connect()
-            res = pipeline.ingest_messages(account_id, provider.stream_messages(limit=limit))
+            if creds.get("provider") == "imap" or "password" in creds:
+                remote_provider = ImapProvider(
+                    host=creds.get("host", "imap.gmail.com"),
+                    username=creds.get("username", email_address),
+                    password=creds["password"],
+                    port=creds.get("port", 993),
+                    use_ssl=creds.get("use_ssl", True)
+                )
+                remote_provider.connect()
+                res = pipeline.ingest_messages(account_id, remote_provider.stream_messages(folder_id="INBOX", limit=limit))
+            elif creds.get("provider") == "gmail" or "access_token" in creds:
+                from backend.app.providers.gmail import GmailProvider
+                remote_provider = GmailProvider(account_email=email_address, token_dict=creds)
+                remote_provider.connect()
+                res = pipeline.ingest_messages(account_id, remote_provider.stream_messages(limit=limit))
+            else:
+                raise HTTPException(status_code=400, detail="Unrecognized credential structure in OS Keyring.")
         else:
-            raise HTTPException(status_code=400, detail="Unrecognized credential structure in OS Keyring.")
-    else:
-        raise HTTPException(status_code=400, detail=f"Sync not supported for provider '{provider_name}'.")
+            raise HTTPException(status_code=400, detail=f"Sync not supported for provider '{provider_name}'.")
+    finally:
+        if remote_provider is not None and hasattr(remote_provider, "disconnect"):
+            try:
+                remote_provider.disconnect()
+            except Exception:
+                pass
 
     with db.connect() as conn:
         cursor = conn.cursor()

@@ -2,7 +2,6 @@
 
 import os
 import mailbox
-from pathlib import Path
 from typing import Generator, List, Optional
 from backend.app.providers.base import AbstractMailProvider, ProviderCapabilities, ProviderFolder
 from backend.app.ingestion.mime_parser import MimeParser, ParsedEmail

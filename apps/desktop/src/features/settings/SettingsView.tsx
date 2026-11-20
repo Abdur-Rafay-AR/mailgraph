@@ -251,6 +251,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setWipeModalOpen(false);
       alert('All local database records and search indexes have been purged.');
       await fetchData();
+      if (onAccountsChanged) onAccountsChanged();
     } catch (err: any) {
       alert(err.message || 'Error wiping data');
     } finally {
@@ -640,15 +641,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 />
               </label>
 
-              <label className="flex items-center justify-between p-3 rounded bg-bg-deep border border-border-subtle cursor-pointer">
+              <div className="flex items-center justify-between p-3 rounded bg-bg-deep border border-border-subtle">
                 <div>
                   <div className="font-semibold text-slate-200">Default Deletion Mode</div>
                   <div className="text-[11px] text-slate-400">
-                    Always prefer moving messages to the provider's Trash folder instead of permanent deletion.
+                    Choose the default safe cleanup action when moving emails out of Inbox.
                   </div>
                 </div>
-                <span className="font-mono text-emerald-400 text-xs uppercase">TRASH (RECOVERABLE)</span>
-              </label>
+                <select
+                  value={settings?.default_delete_mode || 'trash'}
+                  onChange={async (e) => {
+                    const updated = await api.updateSettings({ default_delete_mode: e.target.value });
+                    setSettings(updated);
+                  }}
+                  className="bg-bg-surface border border-border-muted rounded px-2.5 py-1 text-xs font-mono text-emerald-400 uppercase focus:outline-none"
+                >
+                  <option value="trash">TRASH (RECOVERABLE)</option>
+                  <option value="archive">ARCHIVE (ALL MAIL)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -689,10 +700,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </Button>
             </div>
 
-            <div className="p-3 bg-bg-deep rounded border border-border-subtle text-xs font-mono space-y-2">
+            <div className="p-3 bg-bg-deep rounded border border-border-subtle text-xs font-mono space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Loopback Endpoint:</span>
-                <span className="text-slate-200">http://127.0.0.1:11434</span>
+                <span className="text-slate-200">{settings?.local_ai_endpoint || 'http://127.0.0.1:11434'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Connection Status:</span>
@@ -700,10 +711,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {aiStatus?.status || 'Checking...'}
                 </span>
               </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Active Model:</span>
+                <span className="text-slate-200">{settings?.local_ai_model || 'llama3.2'}</span>
+              </div>
               {aiStatus?.installed_models && aiStatus.installed_models.length > 0 && (
                 <div className="flex items-center justify-between pt-1 border-t border-border-subtle">
                   <span className="text-slate-400">Installed Local Models:</span>
-                  <span className="text-brand-light">{aiStatus.installed_models.join(', ')}</span>
+                  <select
+                    value={settings?.local_ai_model || aiStatus.active_model}
+                    onChange={async (e) => {
+                      const updated = await api.updateSettings({ local_ai_model: e.target.value });
+                      setSettings(updated);
+                    }}
+                    className="bg-bg-surface border border-border-muted rounded px-2 py-0.5 text-brand-light focus:outline-none"
+                  >
+                    {aiStatus.installed_models.map((m: string) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
                 </div>
               )}
             </div>

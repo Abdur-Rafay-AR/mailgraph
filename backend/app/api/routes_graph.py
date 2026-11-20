@@ -1,6 +1,6 @@
 """Graph explorer endpoints returning Cytoscape.js topologies and node metrics."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from typing import Optional
 
 from backend.app.db.database import get_database

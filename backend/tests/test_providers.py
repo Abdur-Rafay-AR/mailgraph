@@ -508,6 +508,56 @@ def test_gmail_provider_apply_labels_no_labels_early_return():
         mock_post.assert_not_called()
 
 
+def test_credential_store_encrypts_fallback_on_disk():
+    store = CredentialStore(service_name="MailGraph_Test_Enc")
+    ident = "enc_test@example.com"
+    secret = '{"provider": "imap", "password": "super-secret-password"}'
+    try:
+        assert store.save_credentials(ident, secret) is True
+        raw_file = store._fallback_file.read_text(encoding="utf-8")
+        assert "super-secret-password" not in raw_file
+        assert "enc:v1:" in raw_file
+        assert store.get_credentials(ident) == secret
+    finally:
+        store.delete_credentials(ident)
+
+
+def test_gmail_provider_trash_archive_restore_and_stream():
+    import base64
+    provider = GmailProvider(account_email="user@gmail.com", token_dict={"access_token": "tok_123"})
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value.status_code = 204
+        assert provider.move_to_trash(["g1", "g2"])["count"] == 2
+        assert mock_post.call_args[1]["json"]["addLabelIds"] == ["TRASH"]
+        assert mock_post.call_args[1]["json"]["removeLabelIds"] == ["INBOX"]
+
+        assert provider.archive_messages(["g1"])["count"] == 1
+        assert mock_post.call_args[1]["json"]["removeLabelIds"] == ["INBOX"]
+
+        assert provider.restore_messages(["g1"], dest_folder="INBOX")["count"] == 1
+        assert mock_post.call_args[1]["json"]["addLabelIds"] == ["INBOX"]
+        assert mock_post.call_args[1]["json"]["removeLabelIds"] == ["TRASH"]
+
+        raw_msg = b"From: Alice <alice@example.com>\r\nSubject: Hello\r\n\r\nBody text"
+        b64_raw = base64.urlsafe_b64encode(raw_msg).decode("ascii").rstrip("=")
+        list_resp = MagicMock(status_code=200)
+        list_resp.json.return_value = {"messages": [{"id": "g_stream_1"}]}
+        msg_resp = MagicMock(status_code=200)
+        msg_resp.json.return_value = {
+            "id": "g_stream_1",
+            "threadId": "t_1",
+            "labelIds": ["INBOX", "STARRED"],
+            "raw": b64_raw,
+        }
+        mock_get.side_effect = [list_resp, msg_resp]
+        streamed = list(provider.stream_messages(limit=1))
+        assert len(streamed) == 1
+        assert streamed[0].provider_message_id == "g_stream_1"
+        assert streamed[0].is_read is True
+        assert streamed[0].is_starred is True
+
+
 
 
 

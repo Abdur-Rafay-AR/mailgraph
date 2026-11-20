@@ -16,24 +16,28 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { api } from '../../api/client';
-import { OverviewStats } from '../../types/api';
+import { Account, OverviewStats } from '../../types/api';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { CategorySyncModal } from './CategorySyncModal';
 
 interface OverviewViewProps {
   accountId?: number;
+  accounts?: Account[];
   onNavigate: (view: any) => void;
   onOpenSenderMessages?: (senderAddress: string) => void;
   onSyncMailbox?: () => void;
+  onDemoGenerated?: () => Promise<void> | void;
   isSyncActive?: boolean;
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
   accountId,
+  accounts = [],
   onNavigate,
   onOpenSenderMessages,
   onSyncMailbox,
+  onDemoGenerated,
   isSyncActive = false,
 }) => {
   const [stats, setStats] = useState<OverviewStats | null>(null);
@@ -62,6 +66,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
     try {
       await api.generateSynthetic({ message_count: 75 });
       await fetchStats();
+      if (onDemoGenerated) await onDemoGenerated();
     } catch (err: any) {
       alert(err.message || 'Failed to generate demo data');
     } finally {
@@ -160,7 +165,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       {/* Primary KPI Metric Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Volume */}
-        <div className="p-4 bg-bg-surface rounded-lg border border-border-subtle shadow-sm">
+        <div className="p-4 bg-bg-surface rounded-none border border-border-subtle shadow-sm">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>TOTAL MESSAGES</span>
             <Mail className="w-4 h-4 text-brand-light" />
@@ -174,7 +179,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
 
         {/* Local Storage */}
-        <div className="p-4 bg-bg-surface rounded-lg border border-border-subtle shadow-sm">
+        <div className="p-4 bg-bg-surface rounded-none border border-border-subtle shadow-sm">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>LOCAL FOOTPRINT</span>
             <HardDrive className="w-4 h-4 text-emerald-400" />
@@ -202,7 +207,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
 
         {/* Date Coverage */}
-        <div className="p-4 bg-bg-surface rounded-lg border border-border-subtle shadow-sm">
+        <div className="p-4 bg-bg-surface rounded-none border border-border-subtle shadow-sm">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>OBSERVED TIMELINE</span>
             <Clock className="w-4 h-4 text-amber-400" />
@@ -249,7 +254,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       {/* Two Column Section: Top Senders vs Category Distribution */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top Dominant Senders */}
-        <div className="bg-bg-surface rounded-lg border border-border-subtle p-5 shadow-sm space-y-4">
+        <div className="bg-bg-surface rounded-none border border-border-subtle p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-100 tracking-tight flex items-center gap-2">
               <Users className="w-4 h-4 text-brand-light" />
@@ -369,7 +374,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
         <div
           onClick={() => onNavigate('cleanup')}
-          className="p-4 rounded-lg bg-bg-surface border border-border-subtle hover:border-brand/60 cursor-pointer transition-all shadow-sm space-y-1.5 group"
+          className="p-4 rounded-none bg-bg-surface border border-border-subtle hover:border-brand cursor-pointer transition-all shadow-sm space-y-1.5 group"
         >
           <div className="flex items-center justify-between">
             <span className="font-semibold text-sm text-slate-100 group-hover:text-brand-light transition-colors">
@@ -388,6 +393,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         isOpen={syncModalOpen}
         onClose={() => setSyncModalOpen(false)}
         accountId={accountId}
+        accounts={accounts}
         onSyncSuccess={fetchStats}
       />
     </div>

@@ -226,6 +226,13 @@ ALL_TABLES = [
         dismissed_at TEXT,
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
     );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
     """
 ]
 
@@ -238,13 +245,15 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(is_read);",
     "CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);",
     "CREATE INDEX IF NOT EXISTS idx_messages_sender_folder ON messages(sender_id, folder_id);",
+    "CREATE INDEX IF NOT EXISTS idx_messages_acc_folder_recv ON messages(account_id, folder_id, received_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_folders_type ON folders(folder_type);",
     "CREATE INDEX IF NOT EXISTS idx_senders_domain ON senders(domain);",
     "CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);",
     "CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(content_hash);",
     "CREATE INDEX IF NOT EXISTS idx_addr_msg ON message_addresses(message_id);",
     "CREATE INDEX IF NOT EXISTS idx_msg_cat_msg ON message_categories(message_id);",
-    "CREATE INDEX IF NOT EXISTS idx_msg_cat_composite ON message_categories(message_id, category_id);"
+    "CREATE INDEX IF NOT EXISTS idx_msg_cat_composite ON message_categories(message_id, category_id);",
+    "CREATE INDEX IF NOT EXISTS idx_operations_acc_type ON operations(account_id, operation_type, status);"
 ]
 
 FTS_TABLES = [

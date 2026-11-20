@@ -71,6 +71,7 @@ class SyncManager:
 
     def _run_sync(self, account_id: int, limit: Optional[int] = None):
         db = get_database()
+        remote_provider = None
         try:
             with db.connect() as conn:
                 cursor = conn.cursor()
@@ -92,7 +93,6 @@ class SyncManager:
                     return
 
                 provider_name = row[1]
-                display_name = row[2]
                 email_address = row[3]
 
             with self._lock:
@@ -117,18 +117,24 @@ class SyncManager:
                         self._active_job["status"] = "failed"
                         self._active_job["error_message"] = f"No credentials stored in OS Keyring for {email_address}."
                     return
-                creds = json.loads(secret)
+                try:
+                    creds = json.loads(secret)
+                except Exception:
+                    with self._lock:
+                        self._active_job["status"] = "failed"
+                        self._active_job["error_message"] = "Invalid credential payload in OS Keyring."
+                    return
 
                 if creds.get("provider") == "imap" or "password" in creds:
-                    provider = ImapProvider(
+                    remote_provider = ImapProvider(
                         host=creds.get("host", "imap.gmail.com"),
                         username=creds.get("username", email_address),
                         password=creds["password"],
                         port=creds.get("port", 993),
                         use_ssl=creds.get("use_ssl", True)
                     )
-                    provider.connect()
-                    inbox_total = provider.get_message_count("INBOX")
+                    remote_provider.connect()
+                    inbox_total = remote_provider.get_message_count("INBOX")
                     target_limit = limit if (limit and limit > 0) else inbox_total
                     if inbox_total > 0 and target_limit > inbox_total:
                         target_limit = inbox_total
@@ -136,15 +142,19 @@ class SyncManager:
                     with self._lock:
                         self._active_job["total_count"] = target_limit if target_limit > 0 else inbox_total
 
-                    messages = provider.stream_messages(folder_id="INBOX", limit=target_limit if target_limit > 0 else None, batch_size=50)
+                    messages = remote_provider.stream_messages(
+                        folder_id="INBOX",
+                        limit=target_limit if target_limit > 0 else None,
+                        batch_size=50,
+                    )
 
                 elif creds.get("provider") == "gmail" or "access_token" in creds:
-                    provider = GmailProvider(token_dict=creds)
-                    provider.connect()
+                    remote_provider = GmailProvider(account_email=email_address, token_dict=creds)
+                    remote_provider.connect()
                     target_limit = limit if (limit and limit > 0) else 1000
                     with self._lock:
                         self._active_job["total_count"] = target_limit
-                    messages = provider.stream_messages(limit=target_limit)
+                    messages = remote_provider.stream_messages(limit=target_limit)
                 else:
                     with self._lock:
                         self._active_job["status"] = "failed"
@@ -160,10 +170,10 @@ class SyncManager:
 
             def on_progress(res: IngestionResult):
                 elapsed = max(0.1, time.time() - start_time)
-                tot = self._active_job.get("total_count", 0)
-                pct = min(100.0, (res.scanned_count / tot * 100.0)) if tot > 0 else 0.0
-                speed = res.scanned_count / elapsed
                 with self._lock:
+                    tot = self._active_job.get("total_count", 0)
+                    pct = min(100.0, (res.scanned_count / tot * 100.0)) if tot > 0 else 0.0
+                    speed = res.scanned_count / elapsed
                     self._active_job["scanned_count"] = res.scanned_count
                     self._active_job["inserted_count"] = res.inserted_count
                     self._active_job["skipped_count"] = res.skipped_count
@@ -200,5 +210,11 @@ class SyncManager:
             with self._lock:
                 self._active_job["status"] = "failed"
                 self._active_job["error_message"] = str(ex)
+        finally:
+            if remote_provider is not None and hasattr(remote_provider, "disconnect"):
+                try:
+                    remote_provider.disconnect()
+                except Exception:
+                    pass
 
 sync_manager = SyncManager()

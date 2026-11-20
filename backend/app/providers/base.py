@@ -52,7 +52,7 @@ class AbstractMailProvider(ABC):
         """Move messages to trash if supported."""
         raise NotImplementedError("Trash not supported by this provider.")
 
-    def restore_messages(self, provider_message_ids: List[str]) -> Dict[str, Any]:
+    def restore_messages(self, provider_message_ids: List[str], dest_folder: str = "INBOX") -> Dict[str, Any]:
         """Restore messages from trash or archive."""
         raise NotImplementedError("Restore not supported by this provider.")
 

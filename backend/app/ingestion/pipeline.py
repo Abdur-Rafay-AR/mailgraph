@@ -1,13 +1,18 @@
 """Ingestion pipeline coordinating streaming parsing, deduplication, and database insertion."""
 
-import re
 import json
+import logging
+import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Generator, Iterable, Optional, Callable, Dict, Any
+from typing import Callable, Dict, Iterable, Optional
+
+from backend.app.classification.rules_engine import RulesEngine
+from backend.app.config import settings
 from backend.app.db.database import Database
 from backend.app.ingestion.mime_parser import ParsedEmail
-from backend.app.classification.rules_engine import RulesEngine
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class IngestionResult:
@@ -57,16 +62,27 @@ class IngestionPipeline:
                 
                 cursor.execute("SELECT content_hash FROM messages WHERE account_id = ? AND content_hash IS NOT NULL;", (account_id,))
                 existing_hashes = {row[0] for row in cursor.fetchall()}
-                
+
+                # Cache existing threads for fast thread resolution
+                cursor.execute("SELECT id, provider_thread_id, subject_normalized FROM threads WHERE account_id = ?;", (account_id,))
+                thread_by_pid: Dict[str, int] = {}
+                thread_by_subj: Dict[str, int] = {}
+                for row in cursor.fetchall():
+                    if row[1]:
+                        thread_by_pid[row[1]] = row[0]
+                    if row[2]:
+                        thread_by_subj[row[2]] = row[0]
+
+                index_bodies = bool(settings.index_message_bodies)
                 batch_count = 0
-                
+
                 for email_msg in messages:
                     if is_cancelled and is_cancelled():
                         res.error_message = "Ingestion cancelled by user."
                         break
-                        
+
                     res.scanned_count += 1
-                    
+
                     # Deduplication check
                     if email_msg.provider_message_id in existing_pids:
                         res.skipped_count += 1
@@ -74,14 +90,15 @@ class IngestionPipeline:
                     if email_msg.content_hash and email_msg.content_hash in existing_hashes:
                         res.skipped_count += 1
                         continue
-                        
+
+                    cursor.execute("SAVEPOINT msg_insert;")
                     try:
                         # 1. Resolve or create sender
                         sender_id = self._resolve_sender(cursor, email_msg, sender_cache)
-                        
+
                         # 2. Resolve or create thread
-                        thread_id = self._resolve_thread(cursor, account_id, email_msg)
-                        
+                        thread_id = self._resolve_thread(cursor, account_id, email_msg, thread_by_pid, thread_by_subj)
+
                         # 3. Insert message
                         cursor.execute("""
                             INSERT INTO messages (
@@ -102,37 +119,46 @@ class IngestionPipeline:
                             1 if email_msg.is_important else 0,
                             1 if email_msg.has_attachments else 0,
                             email_msg.size_bytes, email_msg.snippet,
-                            email_msg.body_text, 0, email_msg.content_hash
+                            email_msg.body_text, 1 if index_bodies else 0, email_msg.content_hash
                         ))
                         message_id = cursor.lastrowid
-                        
+
                         # 4. Insert addresses
-                        for addr in email_msg.addresses:
-                            cursor.execute("""
+                        if email_msg.addresses:
+                            cursor.executemany(
+                                """
                                 INSERT INTO message_addresses (message_id, address, display_name, role)
                                 VALUES (?, ?, ?, ?);
-                            """, (message_id, addr.address, addr.display_name, addr.role))
-                            
+                                """,
+                                [(message_id, a.address, a.display_name, a.role) for a in email_msg.addresses]
+                            )
+
                         # 5. Insert attachments
-                        for att in email_msg.attachments:
-                            cursor.execute("""
+                        if email_msg.attachments:
+                            cursor.executemany(
+                                """
                                 INSERT INTO attachments (
                                     message_id, provider_attachment_id, filename,
                                     mime_type, size_bytes, content_hash, is_inline, content_available
                                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-                            """, (
-                                message_id, None, att.filename,
-                                att.mime_type, att.size_bytes, att.content_hash,
-                                1 if att.is_inline else 0,
-                                1 if att.content_available else 0
-                            ))
-                            
-                        # 6. Insert FTS index
+                                """,
+                                [
+                                    (
+                                        message_id, None, att.filename,
+                                        att.mime_type, att.size_bytes, att.content_hash,
+                                        1 if att.is_inline else 0,
+                                        1 if att.content_available else 0
+                                    )
+                                    for att in email_msg.attachments
+                                ]
+                            )
+
+                        # 6. Insert FTS index (respecting privacy setting for body indexing)
                         cursor.execute("""
                             INSERT INTO messages_fts (message_id, subject, snippet, body_text)
                             VALUES (?, ?, ?, ?);
-                        """, (message_id, email_msg.subject, email_msg.snippet, email_msg.body_text or ""))
-                        
+                        """, (message_id, email_msg.subject, email_msg.snippet, (email_msg.body_text or "") if index_bodies else ""))
+
                         # 7. Apply deterministic classification rule
                         cat_name, conf, reason = self.rules_engine.classify(email_msg)
                         cat_id = category_cache.get(cat_name) or category_cache.get("unknown")
@@ -141,14 +167,16 @@ class IngestionPipeline:
                                 INSERT OR IGNORE INTO message_categories (message_id, category_id, source, confidence, reason)
                                 VALUES (?, ?, 'rule', ?, ?);
                             """, (message_id, cat_id, conf, reason))
-                        
+
+                        cursor.execute("RELEASE SAVEPOINT msg_insert;")
+
                         # Update local caches
                         existing_pids.add(email_msg.provider_message_id)
                         if email_msg.content_hash:
                             existing_hashes.add(email_msg.content_hash)
                         res.inserted_count += 1
                         batch_count += 1
-                        
+
                         # Report smooth progress every 15 items
                         if progress_callback and res.scanned_count % 15 == 0:
                             progress_callback(res)
@@ -157,8 +185,11 @@ class IngestionPipeline:
                         if batch_count >= 100:
                             conn.commit()
                             batch_count = 0
-                                
+
                     except Exception as ex:
+                        cursor.execute("ROLLBACK TO SAVEPOINT msg_insert;")
+                        cursor.execute("RELEASE SAVEPOINT msg_insert;")
+                        logger.warning("Failed to ingest message %s: %s", email_msg.provider_message_id, ex)
                         res.failed_count += 1
                         continue
                         
@@ -205,43 +236,38 @@ class IngestionPipeline:
         sender_cache[addr] = sender_id
         return sender_id
 
-    def _resolve_thread(self, cursor: sqlite3.Cursor, account_id: int, email_msg: ParsedEmail) -> int:
+    def _resolve_thread(
+        self,
+        cursor: sqlite3.Cursor,
+        account_id: int,
+        email_msg: ParsedEmail,
+        thread_by_pid: Dict[str, int],
+        thread_by_subj: Dict[str, int],
+    ) -> int:
         norm_subj = re.sub(r'^(re|fwd|fw):\s*', '', email_msg.subject, flags=re.I).strip()
         provider_tid = email_msg.provider_thread_id
-        
+
         # 1. Match by provider thread ID if available
-        if provider_tid:
+        if provider_tid and provider_tid in thread_by_pid:
+            tid = thread_by_pid[provider_tid]
             cursor.execute("""
-                SELECT id, message_count FROM threads 
-                WHERE account_id = ? AND provider_thread_id = ?;
-            """, (account_id, provider_tid))
-            row = cursor.fetchone()
-            if row:
-                tid, count = row[0], row[1]
-                cursor.execute("""
-                    UPDATE threads 
-                    SET message_count = message_count + 1,
-                        last_message_at = CASE WHEN ? > last_message_at THEN ? ELSE last_message_at END
-                    WHERE id = ?;
-                """, (email_msg.received_at, email_msg.received_at, tid))
-                return tid
-                
-        # 2. Match by normalized subject within the last 30 days
-        if norm_subj and norm_subj != "(No Subject)":
+                UPDATE threads
+                SET message_count = message_count + 1,
+                    last_message_at = CASE WHEN ? > last_message_at THEN ? ELSE last_message_at END
+                WHERE id = ?;
+            """, (email_msg.received_at, email_msg.received_at, tid))
+            return tid
+
+        # 2. Match by normalized subject
+        if norm_subj and norm_subj != "(No Subject)" and norm_subj in thread_by_subj:
+            tid = thread_by_subj[norm_subj]
             cursor.execute("""
-                SELECT id, message_count FROM threads 
-                WHERE account_id = ? AND subject_normalized = ?;
-            """, (account_id, norm_subj))
-            row = cursor.fetchone()
-            if row:
-                tid, count = row[0], row[1]
-                cursor.execute("""
-                    UPDATE threads 
-                    SET message_count = message_count + 1,
-                        last_message_at = CASE WHEN ? > last_message_at THEN ? ELSE last_message_at END
-                    WHERE id = ?;
-                """, (email_msg.received_at, email_msg.received_at, tid))
-                return tid
+                UPDATE threads
+                SET message_count = message_count + 1,
+                    last_message_at = CASE WHEN ? > last_message_at THEN ? ELSE last_message_at END
+                WHERE id = ?;
+            """, (email_msg.received_at, email_msg.received_at, tid))
+            return tid
 
         # 3. Create new thread
         cursor.execute("""
@@ -250,7 +276,12 @@ class IngestionPipeline:
                 first_message_at, last_message_at, message_count
             ) VALUES (?, ?, ?, ?, ?, 1);
         """, (account_id, provider_tid, norm_subj, email_msg.received_at, email_msg.received_at))
-        return cursor.lastrowid
+        tid = cursor.lastrowid
+        if provider_tid:
+            thread_by_pid[provider_tid] = tid
+        if norm_subj and norm_subj != "(No Subject)":
+            thread_by_subj[norm_subj] = tid
+        return tid
 
     def _start_sync_run(self, account_id: int) -> int:
         with self.db.connect() as conn:

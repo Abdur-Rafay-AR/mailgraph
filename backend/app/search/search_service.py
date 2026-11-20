@@ -4,7 +4,7 @@ import csv
 import io
 import sqlite3
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 from backend.app.db.database import Database
 from backend.app.search.query_compiler import QueryCompiler, QueryAST
 
@@ -15,6 +15,13 @@ class SearchResult:
     page_size: int
     items: List[Dict[str, Any]]
     facets: Dict[str, Any]
+
+def _sanitize_csv_cell(value: Any) -> Any:
+    """Prevent spreadsheet formula injection in exported CSV cells."""
+    if isinstance(value, str) and value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return f"'{value}"
+    return value
+
 
 class SearchService:
     """Executes validated searches and computes mailbox facets."""
@@ -40,28 +47,28 @@ class SearchService:
         }
         order_col = valid_sort_cols.get(sort_by, "messages.received_at")
         order_dir = "ASC" if sort_dir.upper() == "ASC" else "DESC"
-        
-        offset = max(0, (page - 1) * page_size)
-        
+
+        safe_page = max(1, page)
+        safe_page_size = max(1, min(500, page_size))
+        offset = (safe_page - 1) * safe_page_size
+
         with self.db.connect() as conn:
             cursor = conn.cursor()
-            
-            # 1. Total count
-            count_sql, count_params = self.compiler.compile_sql(ast, count_only=True)
-            cursor.execute(count_sql, count_params)
-            total_count = cursor.fetchone()[0]
-            
+
+            # 1. Compute facets and total_count in a single pass
+            facets = self._compute_facets(conn, ast)
+            total_count = facets["total_matched"]
+
             # 2. Paginated results
             data_sql, data_params = self.compiler.compile_sql(ast, count_only=False)
             data_sql += f" ORDER BY {order_col} {order_dir} LIMIT ? OFFSET ?;"
-            data_params.extend([page_size, offset])
-            
+            data_params.extend([safe_page_size, offset])
+
             cursor.execute(data_sql, data_params)
             rows = cursor.fetchall()
-            
-            items = []
-            for r in rows:
-                items.append({
+
+            items = [
+                {
                     "id": r["id"],
                     "account_id": r["account_id"],
                     "provider_message_id": r["provider_message_id"],
@@ -79,32 +86,30 @@ class SearchService:
                     "size_bytes": r["size_bytes"],
                     "snippet": r["snippet"],
                     "category": r["category_name"],
-                    "category_color": r["category_color"]
-                })
-                
-            # 3. Facets summary
-            facets = self._compute_facets(conn, ast)
-            
+                    "category_color": r["category_color"],
+                }
+                for r in rows
+            ]
+
             return SearchResult(
                 total_count=total_count,
-                page=page,
-                page_size=page_size,
+                page=safe_page,
+                page_size=safe_page_size,
                 items=items,
                 facets=facets
             )
 
     def _compute_facets(self, conn: sqlite3.Connection, ast: QueryAST) -> Dict[str, Any]:
-        """Compute aggregate facets (category distribution, total bytes)."""
+        """Compute aggregate facets (category distribution, total bytes, total count)."""
         cursor = conn.cursor()
         base_sql, params = self.compiler.compile_sql(ast, count_only=False)
-        
+
         facet_sql = f"""
             WITH matched AS ({base_sql})
-            SELECT 
-                COUNT(*) as count,
+            SELECT
+                COUNT(DISTINCT id) as count,
                 COALESCE(SUM(size_bytes), 0) as total_size,
-                COALESCE(category_name, 'unknown') as cat,
-                COUNT(DISTINCT sender_address) as distinct_senders
+                COALESCE(category_name, 'unknown') as cat
             FROM matched
             GROUP BY cat;
         """
@@ -112,13 +117,13 @@ class SearchService:
         category_breakdown = {}
         total_size = 0
         total_matched = 0
-        
+
         for row in cursor.fetchall():
-            count, size, cat, _ = row[0], row[1], row[2], row[3]
+            count, size, cat = row[0], row[1], row[2]
             category_breakdown[cat] = count
             total_size += size
             total_matched += count
-            
+
         return {
             "total_matched": total_matched,
             "total_bytes": total_size,
@@ -132,10 +137,10 @@ class SearchService:
             sql, params = self.compiler.compile_sql(ast, count_only=False)
             sql += " ORDER BY messages.received_at DESC LIMIT ?;"
             params.append(max_records)
-            
+
             cursor.execute(sql, params)
             rows = cursor.fetchall()
-            
+
             output = io.StringIO()
             writer = csv.writer(output)
             writer.writerow([
@@ -145,9 +150,16 @@ class SearchService:
             ])
             for r in rows:
                 writer.writerow([
-                    r["id"], r["received_at"], r["sender_name"], r["sender_address"],
-                    r["sender_domain"], r["subject"], r["category_name"],
-                    1 if r["is_read"] else 0, 1 if r["is_starred"] else 0,
-                    1 if r["has_attachments"] else 0, r["size_bytes"]
+                    r["id"],
+                    _sanitize_csv_cell(r["received_at"]),
+                    _sanitize_csv_cell(r["sender_name"]),
+                    _sanitize_csv_cell(r["sender_address"]),
+                    _sanitize_csv_cell(r["sender_domain"]),
+                    _sanitize_csv_cell(r["subject"]),
+                    _sanitize_csv_cell(r["category_name"]),
+                    1 if r["is_read"] else 0,
+                    1 if r["is_starred"] else 0,
+                    1 if r["has_attachments"] else 0,
+                    r["size_bytes"]
                 ])
             return output.getvalue()

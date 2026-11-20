@@ -146,8 +146,8 @@ class ImapProvider(AbstractMailProvider):
             uid_set = ",".join(chunk)
 
             try:
-                # Use BODY.PEEK[] so message read state is NOT changed during scan!
-                res, data = self.client.uid("FETCH", uid_set, "(BODY.PEEK[])")
+                # Use BODY.PEEK[] + FLAGS so message read state is NOT changed during scan!
+                res, data = self.client.uid("FETCH", uid_set, "(BODY.PEEK[] FLAGS)")
                 if res != "OK" or not data:
                     continue
 
@@ -157,9 +157,13 @@ class ImapProvider(AbstractMailProvider):
                         meta_str = meta_bytes.decode("ascii", errors="ignore")
                         m = re.search(r"UID\s+(\d+)", meta_str)
                         uid_str = m.group(1) if m else "unknown"
+                        flags_match = re.search(r"FLAGS\s*\(([^)]*)\)", meta_str, re.IGNORECASE)
+                        flags_str = flags_match.group(1) if flags_match else ""
 
                         try:
                             parsed = self.parser.parse_bytes(raw_email, provider_message_id=f"imap_{target_folder}_{uid_str}")
+                            parsed.is_read = "\\seen" in flags_str.lower()
+                            parsed.is_starred = "\\flagged" in flags_str.lower()
                             yield parsed
                         except Exception:
                             continue
@@ -167,10 +171,15 @@ class ImapProvider(AbstractMailProvider):
                 # Resilient fallback: fetch individually if a large batch fails (e.g. huge attachment timeout)
                 for single_uid in chunk:
                     try:
-                        s_res, s_data = self.client.uid("FETCH", single_uid, "(BODY.PEEK[])")
+                        s_res, s_data = self.client.uid("FETCH", single_uid, "(BODY.PEEK[] FLAGS)")
                         if s_res == "OK" and s_data and isinstance(s_data[0], tuple):
+                            meta_str = s_data[0][0].decode("ascii", errors="ignore")
                             raw_email = s_data[0][1]
+                            flags_match = re.search(r"FLAGS\s*\(([^)]*)\)", meta_str, re.IGNORECASE)
+                            flags_str = flags_match.group(1) if flags_match else ""
                             parsed = self.parser.parse_bytes(raw_email, provider_message_id=f"imap_{target_folder}_{single_uid}")
+                            parsed.is_read = "\\seen" in flags_str.lower()
+                            parsed.is_starred = "\\flagged" in flags_str.lower()
                             yield parsed
                     except Exception:
                         continue
@@ -501,10 +510,14 @@ class ImapProvider(AbstractMailProvider):
 
                 if add_labels:
                     for lbl in add_labels:
-                        self.client.uid("STORE", uid_set, "+X-GM-LABELS", f'("{lbl}")')
+                        typ, resp = self.client.uid("STORE", uid_set, "+X-GM-LABELS", f'("{lbl}")')
+                        if typ != "OK":
+                            raise RuntimeError(f"IMAP STORE +X-GM-LABELS failed for '{lbl}': {resp}")
 
                 if remove_labels:
                     for lbl in remove_labels:
-                        self.client.uid("STORE", uid_set, "-X-GM-LABELS", f'("{lbl}")')
+                        typ, resp = self.client.uid("STORE", uid_set, "-X-GM-LABELS", f'("{lbl}")')
+                        if typ != "OK":
+                            raise RuntimeError(f"IMAP STORE -X-GM-LABELS failed for '{lbl}': {resp}")
 
         return {"status": "success", "count": total_uids}

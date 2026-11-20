@@ -1,12 +1,14 @@
 """Safe cleanup preview and execution engine with protection safeguards and undo tracking."""
 
 import json
-import sqlite3
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+import logging
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 from backend.app.db.database import Database
-from backend.app.search.query_compiler import QueryCompiler, QueryAST
+from backend.app.search.query_compiler import QueryAST, QueryCompiler
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ActionPreview:
@@ -179,9 +181,9 @@ class ActionEngine:
                         )
                     elif cred.get("provider") == "gmail" or provider_type == "gmail" or "access_token" in cred:
                         from backend.app.providers.gmail import GmailProvider
-                        return GmailProvider(account_email=email_addr)
+                        return GmailProvider(account_email=email_addr, token_dict=cred)
                 except Exception as ex:
-                    print(f"Failed to initialize remote provider for {email_addr}: {ex}")
+                    logger.warning("Failed to initialize remote provider for %s: %s", email_addr, ex)
             return None
 
     def execute_action(
@@ -213,6 +215,8 @@ class ActionEngine:
         snapshot_dict = {
             "version": ast.version,
             "all": [{"field": c.field, "op": c.op, "value": c.value} for c in ast.all],
+            "any": [{"field": c.field, "op": c.op, "value": c.value} for c in ast.any],
+            "none": [{"field": c.field, "op": c.op, "value": c.value} for c in ast.none],
             "search_term": ast.search_term,
             "exclude_protected": ast.exclude_protected
         }
@@ -325,7 +329,7 @@ class ActionEngine:
                         elif operation_type == "label":
                             remote_provider.apply_labels(target_pids, add_labels=[label_name])
                     except Exception as ex:
-                        print(f"Warning: remote mailbox operation failed: {ex}")
+                        logger.warning("Remote mailbox operation failed for op #%s: %s", operation_id, ex)
                         cursor.execute("""
                             UPDATE operations
                             SET status = 'completed_with_errors'
@@ -392,7 +396,7 @@ class ActionEngine:
                             for added_lbl, pids in labels_to_pids.items():
                                 remote_provider.apply_labels(pids, remove_labels=[added_lbl])
                         except Exception as ex:
-                            print(f"Warning: remote label removal failed: {ex}")
+                            logger.warning("Remote label removal failed for op #%s: %s", operation_id, ex)
                         finally:
                             if hasattr(remote_provider, "disconnect"):
                                 remote_provider.disconnect()
@@ -426,7 +430,7 @@ class ActionEngine:
                             pids = [r["provider_message_id"] for r in items if r["provider_message_id"]]
                             remote_provider.restore_messages(pids, dest_folder="INBOX")
                         except Exception as ex:
-                            print(f"Warning: remote restore failed: {ex}")
+                            logger.warning("Remote restore failed for op #%s: %s", operation_id, ex)
                         finally:
                             if hasattr(remote_provider, "disconnect"):
                                 remote_provider.disconnect()

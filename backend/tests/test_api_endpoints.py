@@ -543,6 +543,111 @@ def test_cleanup_account_active_verification_and_undo_404(client):
     assert undo_res.status_code == 404
 
 
+def test_message_id_selection_and_csv_export_with_all_filters():
+    gen_res = client.post("/api/accounts/synthetic/generate", json={
+        "display_name": "Selection Box",
+        "email_address": "sel@local.box",
+        "message_count": 15,
+        "seed": 771
+    })
+    acc_id = gen_res.json()["account_id"]
+
+    search_res = client.post("/api/messages/search", json={
+        "query": {"account_ids": [acc_id], "exclude_protected": False},
+        "page": 1,
+        "page_size": 5
+    }).json()
+    assert len(search_res["items"]) == 5
+    first_id = search_res["items"][0]["id"]
+
+    # Selection by message ID must work in search, cleanup preview, and CSV export
+    by_id = client.post("/api/messages/search", json={
+        "query": {
+            "account_ids": [acc_id],
+            "all": [{"field": "id", "op": "in", "value": [first_id]}],
+            "exclude_protected": False
+        }
+    })
+    assert by_id.status_code == 200
+    assert by_id.json()["total_count"] == 1
+
+    prev_id = client.post("/api/cleanup/preview", json={
+        "account_id": acc_id,
+        "operation_type": "label",
+        "label_name": "MailGraph/Selected",
+        "query": {
+            "all": [{"field": "id", "op": "in", "value": [first_id]}],
+            "exclude_protected": False
+        }
+    })
+    assert prev_id.status_code == 200
+
+    csv_res = client.post("/api/messages/export/csv", json={
+        "query": {
+            "account_ids": [acc_id],
+            "all": [{"field": "id", "op": "eq", "value": first_id}],
+            "exclude_protected": False
+        }
+    })
+    assert csv_res.status_code == 200
+    assert str(first_id) in csv_res.text
+
+
+def test_settings_persistence_and_loopback_validation():
+    # Reject external non-loopback AI endpoint
+    bad_res = client.put("/api/settings", json={"local_ai_endpoint": "https://evil-cloud.example.com"})
+    assert bad_res.status_code == 400
+
+    # Persist valid setting and reload from DB
+    ok_res = client.put("/api/settings", json={
+        "default_delete_mode": "archive",
+        "local_ai_model": "qwen2.5:7b"
+    })
+    assert ok_res.status_code == 200
+    assert ok_res.json()["default_delete_mode"] == "archive"
+
+    from backend.app.config import settings
+    from backend.app.db.database import get_database
+    from backend.app.api.routes_settings import load_persisted_settings
+    settings.default_delete_mode = "trash"
+    with get_database().connect() as conn:
+        load_persisted_settings(conn)
+    assert settings.default_delete_mode == "archive"
+    # Restore default for subsequent tests
+    client.put("/api/settings", json={"default_delete_mode": "trash"})
+
+
+def test_sanitizer_escapes_plaintext_angle_brackets_and_blocks_xss():
+    from backend.app.security.sanitizer import HtmlSanitizer
+    plain = "Check <https://example.com> and <script>alert(1)</script>"
+    rendered = HtmlSanitizer.render_plain_text_preview(plain)
+    assert "<script>" not in rendered
+    assert "&lt;https://example.com&gt;" in rendered
+
+    dirty_html = '<p>Hi</p><script>stealCookies()</script><img src="https://tracker.evil/px.png"><a href="https://ok.com">link</a>'
+    cleaned = HtmlSanitizer.sanitize(dirty_html, allow_remote_images=False)
+    assert "stealCookies" not in cleaned
+    assert "[Image Blocked]" in cleaned
+    assert 'rel="noopener noreferrer"' in cleaned
+
+
+def test_protection_rule_validation_and_mbox_validation():
+    bad_rule = client.post("/api/settings/protection-rules", json={
+        "rule_type": "invalid_type",
+        "rule_value": "foo"
+    })
+    assert bad_rule.status_code == 400
+
+    bad_sender = client.post("/api/settings/protection-rules", json={
+        "rule_type": "sender",
+        "rule_value": "not-an-email"
+    })
+    assert bad_sender.status_code == 400
+
+    missing_mbox = client.post("/api/accounts/mbox/import?account_id=999999&file_path=/nonexistent.mbox")
+    assert missing_mbox.status_code == 404
+
+
 
 
 

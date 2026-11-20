@@ -4,11 +4,25 @@ Zero cloud calls. Strictly loopback-only. Strictly read-only query proposal.
 """
 
 import json
-import requests
 import re
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+from urllib.parse import urlparse
+
+import requests
+
 from backend.app.config import settings
-from backend.app.search.query_compiler import QueryAST, QueryCondition, ALLOWED_FIELDS, ALLOWED_OPS
+from backend.app.search.query_compiler import ALLOWED_FIELDS, ALLOWED_OPS, QueryAST, QueryCondition
+
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+
+def is_loopback_endpoint(endpoint: str) -> bool:
+    """Verify an endpoint URL strictly targets localhost/loopback."""
+    try:
+        parsed = urlparse(endpoint)
+        return parsed.scheme in ("http", "https") and (parsed.hostname or "").lower() in LOOPBACK_HOSTS
+    except Exception:
+        return False
 
 SYSTEM_PROMPT = """You are a natural language query interpreter for a local email application.
 Convert the user's search request into a JSON structure matching this schema:
@@ -32,6 +46,14 @@ class LocalAiService:
 
     def check_status(self) -> Dict[str, Any]:
         """Check if local Ollama daemon is reachable on loopback."""
+        if not is_loopback_endpoint(self.endpoint):
+            return {
+                "is_available": False,
+                "status": "blocked (non-loopback endpoint rejected for privacy)",
+                "endpoint": self.endpoint,
+                "installed_models": [],
+                "active_model": self.model
+            }
         try:
             resp = requests.get(f"{self.endpoint}/api/tags", timeout=1.0)
             if resp.status_code == 200:
@@ -57,6 +79,8 @@ class LocalAiService:
 
     def translate_nl_query(self, user_prompt: str) -> Optional[QueryAST]:
         """Convert a user's natural language request into a validated QueryAST."""
+        if not is_loopback_endpoint(self.endpoint):
+            return None
         try:
             payload = {
                 "model": self.model,

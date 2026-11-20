@@ -26,31 +26,11 @@ def list_senders(
 ):
     """List and rank senders by volume, storage contribution, unread count, and activity."""
     cursor = conn.cursor()
-    offset = max(0, (page - 1) * page_size)
+    safe_page = max(1, page)
+    safe_page_size = max(1, min(500, page_size))
+    offset = (safe_page - 1) * safe_page_size
     order_dir = sort_dir.upper()
-    
-    where_clauses = ["1=1"]
-    params: List[Any] = []
-    
-    if search and search.strip():
-        term = f"%{search.strip().lower()}%"
-        where_clauses.append("(s.normalized_address LIKE ? OR s.display_name LIKE ? OR s.domain LIKE ?)")
-        params.extend([term, term, term])
-        
-    if domain:
-        where_clauses.append("s.domain = ?")
-        params.append(domain.lower())
-        
-    if is_protected is not None:
-        where_clauses.append("s.is_protected = ?")
-        params.append(1 if is_protected else 0)
-        
-    if category:
-        where_clauses.append("EXISTS (SELECT 1 FROM messages m2 JOIN message_categories mc ON m2.id = mc.message_id JOIN categories c ON mc.category_id = c.id WHERE m2.sender_id = s.id AND c.name = ?)")
-        params.append(category)
-        
-    where_sql = " AND ".join(where_clauses)
-    
+
     # Pre-resolve trash/spam folder IDs for constant-time index scans
     cursor.execute("SELECT id FROM folders WHERE folder_type IN ('trash', 'spam');")
     trash_ids = [str(r[0]) for r in cursor.fetchall()]
@@ -63,6 +43,33 @@ def list_senders(
         active_folder_filter += f" AND m.account_id = {int(account_id)}"
     else:
         active_folder_filter += " AND m.account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
+
+    where_clauses = ["1=1"]
+    params: List[Any] = []
+
+    if search and search.strip():
+        term = f"%{search.strip().lower()}%"
+        where_clauses.append("(s.normalized_address LIKE ? OR s.display_name LIKE ? OR s.domain LIKE ?)")
+        params.extend([term, term, term])
+
+    if domain:
+        where_clauses.append("s.domain = ?")
+        params.append(domain.lower())
+
+    if is_protected is not None:
+        where_clauses.append("s.is_protected = ?")
+        params.append(1 if is_protected else 0)
+
+    if category:
+        cat_folder_sql = f"AND (m2.folder_id IS NULL OR m2.folder_id NOT IN ({','.join(trash_ids)}))" if trash_ids else ""
+        cat_acc_sql = f"AND m2.account_id = {int(account_id)}" if account_id is not None else "AND m2.account_id IN (SELECT id FROM accounts WHERE status != 'paused')"
+        where_clauses.append(
+            f"EXISTS (SELECT 1 FROM messages m2 JOIN message_categories mc ON m2.id = mc.message_id "
+            f"JOIN categories c ON mc.category_id = c.id WHERE m2.sender_id = s.id {cat_folder_sql} {cat_acc_sql} AND c.name = ?)"
+        )
+        params.append(category)
+
+    where_sql = " AND ".join(where_clauses)
     
     # Total active senders count (only senders with active non-trash messages)
     count_sql = f"""
@@ -95,7 +102,7 @@ def list_senders(
         ORDER BY {sort_by} {order_dir}
         LIMIT ? OFFSET ?;
     """
-    data_params = list(params) + [page_size, offset]
+    data_params = list(params) + [safe_page_size, offset]
     cursor.execute(data_sql, data_params)
     rows = cursor.fetchall()
     
@@ -137,8 +144,8 @@ def list_senders(
         
     return {
         "total_count": total_count,
-        "page": page,
-        "page_size": page_size,
+        "page": safe_page,
+        "page_size": safe_page_size,
         "items": items
     }
 
@@ -222,43 +229,51 @@ def bulk_cleanup_senders_preview(req: BulkSenderCleanupRequest):
     """Generate exact simulation preview for one or multiple selected senders."""
     if not req.sender_ids:
         raise HTTPException(status_code=400, detail="At least one sender ID must be specified.")
-        
+    if req.operation_type not in ("trash", "archive"):
+        raise HTTPException(status_code=400, detail="operation_type must be 'trash' or 'archive'.")
+
     db = get_database()
     with db.connect() as conn:
         cursor = conn.cursor()
         placeholders = ", ".join("?" for _ in req.sender_ids)
         cursor.execute(f"SELECT normalized_address FROM senders WHERE id IN ({placeholders});", req.sender_ids)
         addresses = [r[0] for r in cursor.fetchall()]
-        
-        cursor.execute(f"""
-            SELECT DISTINCT account_id FROM messages 
-            WHERE sender_id IN ({placeholders}) 
-              AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')));
-        """, req.sender_ids)
-        acc_rows = cursor.fetchall()
-        target_account_ids = [r[0] for r in acc_rows if r[0] is not None]
-        if not target_account_ids:
-            cursor.execute("SELECT id FROM accounts ORDER BY id DESC LIMIT 1;")
-            acc_row = cursor.fetchone()
-            target_account_ids = [acc_row[0]] if acc_row else [1]
-    
+
+        if req.account_id is not None:
+            target_account_ids = [req.account_id]
+        else:
+            cursor.execute(f"""
+                SELECT DISTINCT account_id FROM messages
+                WHERE sender_id IN ({placeholders})
+                  AND account_id IN (SELECT id FROM accounts WHERE status != 'paused')
+                  AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')));
+            """, req.sender_ids)
+            acc_rows = cursor.fetchall()
+            target_account_ids = [r[0] for r in acc_rows if r[0] is not None]
+            if not target_account_ids:
+                cursor.execute("SELECT id FROM accounts WHERE status != 'paused' ORDER BY id DESC LIMIT 1;")
+                acc_row = cursor.fetchone()
+                target_account_ids = [acc_row[0]] if acc_row else []
+
     if not addresses:
         raise HTTPException(status_code=404, detail="None of the specified senders were found.")
-        
+    if not target_account_ids:
+        raise HTTPException(status_code=404, detail="No active account found.")
+
     engine = ActionEngine(db)
-    
+
     ast = QueryAST(
         version=1,
         all=[QueryCondition(field="sender_address", op="in", value=addresses)],
         exclude_protected=req.exclude_protected
     )
-    
+
     target_count = 0
     affected_threads_count = 0
     total_size_bytes = 0
     protected_excluded_count = 0
-    all_top_senders = []
-    all_samples = []
+    all_top_senders: List[Dict[str, Any]] = []
+    all_samples: List[Dict[str, Any]] = []
     reversible = True
     reversibility_note = ""
 
@@ -272,6 +287,9 @@ def bulk_cleanup_senders_preview(req: BulkSenderCleanupRequest):
         all_samples.extend(preview.samples)
         reversible = preview.reversible
         reversibility_note = preview.reversibility_note
+
+    all_top_senders.sort(key=lambda s: s.get("count", 0), reverse=True)
+    all_samples.sort(key=lambda s: s.get("received_at") or "", reverse=True)
 
     return {
         "operation_type": req.operation_type,
@@ -293,38 +311,53 @@ def bulk_cleanup_senders_preview(req: BulkSenderCleanupRequest):
 @router.post("/bulk-cleanup-execute")
 def bulk_cleanup_senders_execute(req: BulkSenderCleanupRequest):
     """Execute confirmed cleanup on one or multiple selected senders."""
+    if not req.sender_ids:
+        raise HTTPException(status_code=400, detail="At least one sender ID must be specified.")
+    if req.operation_type not in ("trash", "archive"):
+        raise HTTPException(status_code=400, detail="operation_type must be 'trash' or 'archive'.")
+
     db = get_database()
     with db.connect() as conn:
         cursor = conn.cursor()
         placeholders = ", ".join("?" for _ in req.sender_ids)
         cursor.execute(f"SELECT normalized_address FROM senders WHERE id IN ({placeholders});", req.sender_ids)
         addresses = [r[0] for r in cursor.fetchall()]
-        
-        cursor.execute(f"""
-            SELECT DISTINCT account_id FROM messages 
-            WHERE sender_id IN ({placeholders}) 
-              AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')));
-        """, req.sender_ids)
-        acc_rows = cursor.fetchall()
-        target_account_ids = [r[0] for r in acc_rows if r[0] is not None]
-        if not target_account_ids:
-            cursor.execute("SELECT id FROM accounts ORDER BY id DESC LIMIT 1;")
-            acc_row = cursor.fetchone()
-            target_account_ids = [acc_row[0]] if acc_row else [1]
-    
+
+        if req.account_id is not None:
+            target_account_ids = [req.account_id]
+        else:
+            cursor.execute(f"""
+                SELECT DISTINCT account_id FROM messages
+                WHERE sender_id IN ({placeholders})
+                  AND account_id IN (SELECT id FROM accounts WHERE status != 'paused')
+                  AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE folder_type IN ('trash', 'spam')));
+            """, req.sender_ids)
+            acc_rows = cursor.fetchall()
+            target_account_ids = [r[0] for r in acc_rows if r[0] is not None]
+            if not target_account_ids:
+                cursor.execute("SELECT id FROM accounts WHERE status != 'paused' ORDER BY id DESC LIMIT 1;")
+                acc_row = cursor.fetchone()
+                target_account_ids = [acc_row[0]] if acc_row else []
+
     if not addresses:
         raise HTTPException(status_code=404, detail="No matching senders.")
-        
+    if not target_account_ids:
+        raise HTTPException(status_code=404, detail="No active account found.")
+
     engine = ActionEngine(db)
-    
+
     ast = QueryAST(
         version=1,
         all=[QueryCondition(field="sender_address", op="in", value=addresses)],
         exclude_protected=req.exclude_protected
     )
-    
-    last_op_id = None
+
+    op_ids: List[int] = []
     for acc_id in target_account_ids:
-        last_op_id = engine.execute_action(acc_id, req.operation_type, ast)
-        
-    return {"status": "completed", "operation_id": last_op_id}
+        op_ids.append(engine.execute_action(acc_id, req.operation_type, ast))
+
+    return {
+        "status": "completed",
+        "operation_id": op_ids[-1] if op_ids else None,
+        "operation_ids": op_ids,
+    }

@@ -32,69 +32,87 @@ DEFAULT_PROTECTION_RULES = [
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Execute all schema migrations and initial seed data."""
     cursor = conn.cursor()
-    
-    # 1. Create all standard tables
+
+    # 1. Create all standard tables, indexes, and FTS5 virtual tables idempotently
     for ddl in ALL_TABLES:
         cursor.execute(ddl)
-        
-    # 2. Create performance indexes
+
     for idx in INDEXES:
         cursor.execute(idx)
-        
-    # 3. Create FTS5 virtual tables
+
     for fts in FTS_TABLES:
         cursor.execute(fts)
-        
-    # 4. Seed default categories if not already present
+
+    # Ensure any new system categories are seeded
     for name, desc, color in DEFAULT_CATEGORIES:
         cursor.execute("""
             INSERT OR IGNORE INTO categories (name, description, is_system, color)
             VALUES (?, ?, 1, ?);
         """, (name, desc, color))
 
-    # 5. Seed baseline protection rules
-    for rule_type, val, reason in DEFAULT_PROTECTION_RULES:
-        cursor.execute("""
-            INSERT OR IGNORE INTO protection_rules (account_id, rule_type, rule_value, reason, enabled)
-            SELECT NULL, ?, ?, ?, 1
-            WHERE NOT EXISTS (
-                SELECT 1 FROM protection_rules WHERE rule_type = ? AND rule_value = ?
-            );
-        """, (rule_type, val, reason, rule_type, val))
+    cursor.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations;")
+    current_version = cursor.fetchone()[0]
 
-    # 6. Backfill finance category for banking and fintech senders (NayaPay, UBL, etc.)
-    cursor.execute("""
-        INSERT OR REPLACE INTO message_categories (message_id, category_id, source, confidence, reason)
-        SELECT m.id, (SELECT id FROM categories WHERE name = 'finance'), 'rule', 0.95, 'Financial institution or banking alert'
-        FROM messages m
-        JOIN senders s ON m.sender_id = s.id
-        WHERE (SELECT id FROM categories WHERE name = 'finance') IS NOT NULL
-          AND (
-            s.domain IN (
-                'nayapay.com', 'sadapay.pk', 'ubldirect.com', 'ubl.com.pk', 'meezanbank.com', 'hbl.com',
-                'bankalfalah.com', 'sc.com', 'mcb.com.pk', 'abl.com', 'askaribank.com', 'faysalbank.com',
-                'jazzcash.com.pk', 'easypaisa.com.pk', 'paypal.com', 'wise.com', 'revolut.com', 'stripe.com',
-                'chase.com', 'bankofamerica.com', 'wellsfargo.com', 'citi.com', 'barclays.com', 'hsbc.com'
-            )
-            OR LOWER(s.normalized_address) LIKE '%nayapay%'
-            OR LOWER(s.normalized_address) LIKE '%ubl%'
-            OR LOWER(s.normalized_address) LIKE '%meezan%'
-            OR LOWER(s.normalized_address) LIKE '%sadapay%'
-            OR LOWER(s.normalized_address) LIKE '%easypaisa%'
-            OR LOWER(s.normalized_address) LIKE '%jazzcash%'
-            OR LOWER(s.display_name) LIKE '%nayapay%'
-            OR LOWER(s.display_name) LIKE '%ubl%'
-            OR LOWER(s.display_name) LIKE '%meezan%'
-            OR LOWER(m.subject) LIKE '%ibft%'
-            OR LOWER(m.subject) LIKE '%raast%'
-            OR LOWER(m.subject) LIKE '%account debited%'
-            OR LOWER(m.subject) LIKE '%account credited%'
-            OR LOWER(m.subject) LIKE '%funds transfer%'
-          );
-    """)
-        
-    # 7. Record migration version 1
-    cursor.execute("""
-        INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);
-    """)
+    # Version 1: baseline protection rules and initial finance category backfill
+    if current_version < 1:
+        for rule_type, val, reason in DEFAULT_PROTECTION_RULES:
+            cursor.execute("""
+                INSERT OR IGNORE INTO protection_rules (account_id, rule_type, rule_value, reason, enabled)
+                SELECT NULL, ?, ?, ?, 1
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM protection_rules WHERE rule_type = ? AND rule_value = ?
+                );
+            """, (rule_type, val, reason, rule_type, val))
+
+        cursor.execute("""
+            INSERT OR IGNORE INTO message_categories (message_id, category_id, source, confidence, reason)
+            SELECT m.id, (SELECT id FROM categories WHERE name = 'finance'), 'rule', 0.95, 'Financial institution or banking alert'
+            FROM messages m
+            JOIN senders s ON m.sender_id = s.id
+            WHERE (SELECT id FROM categories WHERE name = 'finance') IS NOT NULL
+              AND (
+                s.domain IN (
+                    'nayapay.com', 'sadapay.pk', 'ubldirect.com', 'ubl.com.pk', 'meezanbank.com', 'hbl.com',
+                    'bankalfalah.com', 'sc.com', 'mcb.com.pk', 'abl.com', 'askaribank.com', 'faysalbank.com',
+                    'jazzcash.com.pk', 'easypaisa.com.pk', 'paypal.com', 'wise.com', 'revolut.com', 'stripe.com',
+                    'chase.com', 'bankofamerica.com', 'wellsfargo.com', 'citi.com', 'barclays.com', 'hsbc.com'
+                )
+                OR LOWER(s.normalized_address) LIKE '%nayapay%'
+                OR LOWER(s.normalized_address) LIKE '%ubl%'
+                OR LOWER(s.normalized_address) LIKE '%meezan%'
+                OR LOWER(s.normalized_address) LIKE '%sadapay%'
+                OR LOWER(s.normalized_address) LIKE '%easypaisa%'
+                OR LOWER(s.normalized_address) LIKE '%jazzcash%'
+                OR LOWER(s.display_name) LIKE '%nayapay%'
+                OR LOWER(s.display_name) LIKE '%ubl%'
+                OR LOWER(s.display_name) LIKE '%meezan%'
+                OR LOWER(m.subject) LIKE '%ibft%'
+                OR LOWER(m.subject) LIKE '%raast%'
+                OR LOWER(m.subject) LIKE '%account debited%'
+                OR LOWER(m.subject) LIKE '%account credited%'
+                OR LOWER(m.subject) LIKE '%funds transfer%'
+              );
+        """)
+
+        cursor.execute("INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);")
+
+    # Version 2: deduplicate insights and enforce uniqueness constraint
+    if current_version < 2:
+        cursor.execute("""
+            DELETE FROM insights
+            WHERE id NOT IN (
+                SELECT COALESCE(
+                    MAX(CASE WHEN dismissed_at IS NOT NULL THEN id END),
+                    MAX(id)
+                )
+                FROM insights
+                GROUP BY COALESCE(account_id, -1), insight_type, title
+            );
+        """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_unique
+            ON insights(COALESCE(account_id, -1), insight_type, title);
+        """)
+        cursor.execute("INSERT OR IGNORE INTO schema_migrations (version) VALUES (2);")
+
     conn.commit()
