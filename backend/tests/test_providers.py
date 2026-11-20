@@ -231,4 +231,207 @@ def test_imap_apply_labels_multi_folder_selection_and_status_checks():
     mock_client.uid.assert_any_call("STORE", "101", "+X-GM-LABELS", '("MailGraph/Multi")')
     mock_client.uid.assert_any_call("STORE", "201", "+X-GM-LABELS", '("MailGraph/Multi")')
 
+def test_gmail_provider_apply_labels():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+
+    with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+        # 1. Label catalog lookup returns existing labels
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "labels": [{"id": "Label_123", "name": "MailGraph/Finance"}]
+        }
+
+        # 2. batchModify succeeds
+        mock_post.return_value.status_code = 204
+
+        res = provider.apply_labels(
+            ["msg_1", "msg_2"],
+            add_labels=["MailGraph/Finance"]
+        )
+        assert res["status"] == "success"
+        assert res["count"] == 2
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        assert "batchModify" in args[0]
+        assert kwargs["json"]["addLabelIds"] == ["Label_123"]
+        assert kwargs["json"]["ids"] == ["msg_1", "msg_2"]
+
+def test_gmail_provider_resolve_or_create_label_cached():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+    provider._label_cache["MailGraph/Receipts"] = "Label_Receipts"
+
+    with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+        label_id = provider.resolve_or_create_label_id("MailGraph/Receipts")
+        assert label_id == "Label_Receipts"
+        mock_get.assert_not_called()
+        mock_post.assert_not_called()
+
+def test_gmail_provider_resolve_or_create_label_creates_new():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+
+    with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+        # 1. Catalog does not contain the label
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"labels": []}
+
+        # 2. POST creates the label
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {"id": "Label_Created", "name": "MailGraph/NewTag"}
+
+        label_id = provider.resolve_or_create_label_id("MailGraph/NewTag")
+        assert label_id == "Label_Created"
+        assert provider._label_cache["MailGraph/NewTag"] == "Label_Created"
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        assert "users/me/labels" in args[0]
+        assert kwargs["json"]["name"] == "MailGraph/NewTag"
+
+def test_gmail_provider_resolve_or_create_label_409_conflict():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+
+    with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+        # 1st get (refresh before post) returns empty
+        # 2nd get (refresh after 409) returns newly detected label
+        get_response_empty = MagicMock(status_code=200)
+        get_response_empty.json.return_value = {"labels": []}
+        get_response_conflict = MagicMock(status_code=200)
+        get_response_conflict.json.return_value = {
+            "labels": [{"id": "Label_Race", "name": "MailGraph/Conflict"}]
+        }
+        mock_get.side_effect = [get_response_empty, get_response_conflict]
+
+        mock_post.return_value.status_code = 409
+
+        label_id = provider.resolve_or_create_label_id("MailGraph/Conflict")
+        assert label_id == "Label_Race"
+        assert provider._label_cache["MailGraph/Conflict"] == "Label_Race"
+        assert mock_get.call_count == 2
+        mock_post.assert_called_once()
+
+def test_gmail_provider_apply_labels_chunking_1000():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+    provider._label_cache["MailGraph/Bulk"] = "Label_Bulk"
+
+    # 1500 messages should split into chunks of 1000 and 500
+    msg_ids = [f"gmail_msg_{i}" for i in range(1500)]
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+
+        res = provider.apply_labels(msg_ids, add_labels=["MailGraph/Bulk"])
+        assert res["status"] == "success"
+        assert res["count"] == 1500
+        assert mock_post.call_count == 2
+
+        call1_kwargs = mock_post.call_args_list[0][1]
+        assert len(call1_kwargs["json"]["ids"]) == 1000
+        assert call1_kwargs["json"]["ids"] == msg_ids[:1000]
+
+        call2_kwargs = mock_post.call_args_list[1][1]
+        assert len(call2_kwargs["json"]["ids"]) == 500
+        assert call2_kwargs["json"]["ids"] == msg_ids[1000:]
+
+def test_gmail_provider_apply_labels_rate_limiting_retry():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+    provider._label_cache["MailGraph/Tag"] = "Label_Tag"
+
+    with patch("requests.post") as mock_post, patch("time.sleep") as mock_sleep:
+        # First call: 429 Rate Limit; Second call: 204 Success
+        resp_429 = MagicMock(status_code=429, text="Rate limit exceeded")
+        resp_204 = MagicMock(status_code=204)
+        mock_post.side_effect = [resp_429, resp_204]
+
+        res = provider.apply_labels(["msg_1"], add_labels=["MailGraph/Tag"])
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once()
+
+def test_gmail_provider_oauth_scope():
+    from backend.app.providers.gmail import MODIFY_SCOPE
+    provider = GmailProvider(account_email="test@gmail.com", client_id="test_client_id")
+    url = provider.get_oauth_url()
+    assert f"scope={MODIFY_SCOPE}" in url
+
+def test_gmail_provider_apply_labels_404_cache_busting():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+    # Seed cache with stale label ID
+    provider._label_cache["MailGraph/Stale"] = "Label_Old"
+
+    with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+        # First batchModify returns 404 (stale label ID)
+        resp_404 = MagicMock(status_code=404, text="Label not found")
+        # Second batchModify returns 204
+        resp_204 = MagicMock(status_code=204)
+        mock_post.side_effect = [resp_404, resp_204]
+
+        # GET refresh_labels returns new label ID
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "labels": [{"id": "Label_Fresh", "name": "MailGraph/Stale"}]
+        }
+
+        res = provider.apply_labels(["msg_1"], add_labels=["MailGraph/Stale"])
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        assert mock_post.call_count == 2
+        mock_get.assert_called_once()
+        # Verify second call used Label_Fresh
+        second_call_kwargs = mock_post.call_args_list[1][1]
+        assert second_call_kwargs["json"]["addLabelIds"] == ["Label_Fresh"]
+
+def test_gmail_provider_apply_labels_remove_and_add():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+    provider._label_cache["MailGraph/New"] = "Label_New"
+    provider._label_cache["MailGraph/Old"] = "Label_Old"
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 204
+
+        res = provider.apply_labels(
+            ["msg_1"],
+            add_labels=["MailGraph/New"],
+            remove_labels=["MailGraph/Old"]
+        )
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        kwargs = mock_post.call_args[1]
+        assert kwargs["json"]["addLabelIds"] == ["Label_New"]
+        assert kwargs["json"]["removeLabelIds"] == ["Label_Old"]
+
+def test_gmail_provider_apply_labels_empty_messages():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+
+    res = provider.apply_labels([], add_labels=["MailGraph/New"])
+    assert res["status"] == "success"
+    assert res["count"] == 0
+
+def test_gmail_provider_list_labels():
+    provider = GmailProvider(account_email="test@gmail.com")
+    provider._access_token = "mock_token"
+
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "labels": [
+                {"id": "INBOX", "name": "INBOX"},
+                {"id": "Label_1", "name": "MailGraph/Finance"}
+            ]
+        }
+        labels = provider.list_labels()
+        assert "INBOX" in labels
+        assert "MailGraph/Finance" in labels
+
+
+
+
 
